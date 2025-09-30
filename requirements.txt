@@ -1,4 +1,13 @@
 streamlit
+pandas
+curl-cffi
+beautifulsoup4
 pyppeteer
 pyppeteer-stealth
 nest-asyncio
+google-generativeai
+supabase
+openpyxl
+cryptography
+requests
+websockets
