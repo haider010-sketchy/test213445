@@ -1,30 +1,29 @@
 import streamlit as st
 import asyncio
-import nest_asyncio
 from pyppeteer import launch
 from pyppeteer_stealth import stealth
+from threading import Thread
 
-# Apply nest_asyncio to fix threading issues
-nest_asyncio.apply()
-
-async def scrape_page(url: str):
-    browser = await launch(
-        headless=True,
-        args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-    )
-    page = await browser.newPage()
+def scrape_page_sync(url: str, result_container):
+    """Run async scraping in a separate thread"""
+    async def scrape():
+        browser = await launch(
+            headless=True,
+            args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+        )
+        page = await browser.newPage()
+        await stealth(page)
+        await page.goto(url, {'waitUntil': 'networkidle2', 'timeout': 60000})
+        await asyncio.sleep(10)
+        html = await page.content()
+        await browser.close()
+        return html
     
-    # Apply stealth to avoid detection
-    await stealth(page)
-    
-    await page.goto(url, {'waitUntil': 'networkidle2', 'timeout': 60000})
-    
-    # Wait 10 seconds for page to fully load
-    await asyncio.sleep(10)
-    
-    html = await page.content()
-    await browser.close()
-    return html
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    result = loop.run_until_complete(scrape())
+    loop.close()
+    result_container['html'] = result
 
 st.title("Web Page HTML Downloader (Stealth Mode)")
 
@@ -34,10 +33,12 @@ if st.button("Get HTML"):
     if url:
         with st.spinner("Loading page... Please wait 10 seconds..."):
             try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                html = loop.run_until_complete(scrape_page(url))
-                loop.close()
+                result = {}
+                thread = Thread(target=scrape_page_sync, args=(url, result))
+                thread.start()
+                thread.join()
+                
+                html = result['html']
                 
                 st.success("Page loaded successfully!")
                 
