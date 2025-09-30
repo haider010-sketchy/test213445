@@ -3,13 +3,27 @@ import asyncio
 from pyppeteer import launch
 from pyppeteer_stealth import stealth
 from threading import Thread
+import signal
+
+# Monkey patch to disable signal handling in pyppeteer
+original_signal = signal.signal
+def signal_override(signalnum, handler):
+    try:
+        return original_signal(signalnum, handler)
+    except ValueError:
+        pass
+
+signal.signal = signal_override
 
 def scrape_page_sync(url: str, result_container):
     """Run async scraping in a separate thread"""
     async def scrape():
         browser = await launch(
             headless=True,
-            args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+            args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+            handleSIGINT=False,
+            handleSIGTERM=False,
+            handleSIGHUP=False
         )
         page = await browser.newPage()
         await stealth(page)
