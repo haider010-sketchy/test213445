@@ -1,3 +1,4 @@
 streamlit
 pyppeteer
 pyppeteer-stealth
+nest-asyncio
