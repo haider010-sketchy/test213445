@@ -1,3 +1,11 @@
 streamlit
 playwright
 tf-playwright-stealth
+beautifulsoup4
+pandas
+google-genai
+requests
+openpyxl
+supabase
+curl-cffi
+
