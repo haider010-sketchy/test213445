@@ -10,4 +10,4 @@ supabase
 openpyxl
 cryptography
 requests
-
+websockets==10.4
