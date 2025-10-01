@@ -1,7 +1,22 @@
 import streamlit as st
 import asyncio
+import subprocess
+import sys
+import os
+
+# Install Playwright browsers on Streamlit Cloud
+if not os.path.exists("/home/appuser/.cache/ms-playwright/chromium_headless_shell-1187"):
+    try:
+        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+        subprocess.run([sys.executable, "-m", "playwright", "install-deps", "chromium"], check=True)
+    except Exception as e:
+        print(f"Error installing Playwright: {e}")
+
+import streamlit as st
+import asyncio
 from playwright.async_api import async_playwright
 from playwright_stealth import stealth_async
+from threading import Thread
 from threading import Thread
 
 def scrape_page_sync(url: str, result_container):
@@ -55,3 +70,4 @@ if st.button("Get HTML"):
                 st.error(f"Error: {str(e)}")
     else:
         st.warning("Please enter a URL")
+
