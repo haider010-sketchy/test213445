@@ -1,13 +1,3 @@
 streamlit
-pandas
-curl-cffi
-beautifulsoup4
-pyppeteer
-pyppeteer-stealth
-nest-asyncio
-google-generativeai
-supabase
-openpyxl
-cryptography
-requests
-websockets==10.4
+playwright
+tf-playwright-stealth
