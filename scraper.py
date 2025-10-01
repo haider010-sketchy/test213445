@@ -185,7 +185,6 @@ class AuctionScraper:
             selenium_sites = ["HiBid", "BiddingKings", "BidLlama", "MAC.bid", "Vista", "BidAuctionDepot", "BidSoflo"]
             
             if site in selenium_sites:
-                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
                 # Initialize Playwright browser
                 self.loop = asyncio.new_event_loop()
