@@ -9,17 +9,15 @@ import statistics
 import traceback
 import io
 import pandas as pd
-import asyncio
-import nest_asyncio
-from pyppeteer import launch
-from pyppeteer_stealth import stealth
-
-# Apply nest_asyncio for Streamlit compatibility
-nest_asyncio.apply()
 
 # Google Gemini API imports
 from google import genai
 from google.genai import types
+
+# Playwright for web scraping
+from playwright.async_api import async_playwright
+from playwright_stealth import stealth_async
+import asyncio
 
 class AuctionScraper:
     def __init__(self, gemini_api_keys, ui_placeholders):
@@ -34,8 +32,12 @@ class AuctionScraper:
         self.gemini_api_keys = [key for key in gemini_api_keys if key]
         self.current_api_key_index = 0
         self.gemini_client = None
+        
+        # Playwright browser instances
+        self.playwright = None
         self.browser = None
         self.page = None
+        self.loop = None
         
         # Rate limiting variables
         self.request_times = []
@@ -48,51 +50,11 @@ class AuctionScraper:
         self.running = False
         self._is_running = False
         if self.browser:
-            asyncio.get_event_loop().run_until_complete(self.browser.close())
-
-    async def init_browser(self):
-        """Initialize Pyppeteer browser"""
-        if not self.browser:
-            self.browser = await launch(
-                headless=True,
-                args=[
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-gpu'
-                ],
-                handleSIGINT=False,
-                handleSIGTERM=False,
-                handleSIGHUP=False
-            )
-        if not self.page:
-            self.page = await self.browser.newPage()
-            await stealth(self.page)
-            await self.page.setUserAgent(self.headers['User-Agent'])
-
-    async def wait_for_element(self, selector, timeout=40000):
-        """Wait for element to appear (like WebDriverWait)"""
-        try:
-            await self.page.waitForSelector(selector, {'timeout': timeout})
-            return True
-        except Exception as e:
-            return False
-
-    async def get_page_content(self):
-        """Get page HTML content"""
-        return await self.page.content()
-
-    async def navigate_to(self, url):
-        """Navigate to URL and wait for page load"""
-        await self.page.goto(url, {'waitUntil': 'networkidle2', 'timeout': 60000})
-
-    async def scroll_to_bottom(self):
-        """Scroll to bottom of page"""
-        await self.page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
-
-    async def click_element(self, selector):
-        """Click an element"""
-        await self.page.click(selector)
+            try:
+                self.loop.run_until_complete(self.browser.close())
+                self.loop.run_until_complete(self.playwright.stop())
+            except:
+                pass
 
     def setup_gemini(self):
         try:
@@ -223,46 +185,55 @@ class AuctionScraper:
             selenium_sites = ["HiBid", "BiddingKings", "BidLlama", "MAC.bid", "Vista", "BidAuctionDepot", "BidSoflo"]
             
             if site in selenium_sites:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(self.init_browser())
+                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+                # Initialize Playwright browser
+                self.loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self.loop)
+                
+                async def init_browser():
+                    self.playwright = await async_playwright().start()
+                    self.browser = await self.playwright.chromium.launch(
+                        headless=True,
+                        args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+                    )
+                    self.page = await self.browser.new_page()
+                    await stealth_async(self.page)
+                
+                self.loop.run_until_complete(init_browser())
             
             if site == "HiBid": 
-                loop = asyncio.get_event_loop()
-                loop.run_until_complete(self.scrape_hibid_async(url, start_page, end_page))
+                self.scrape_hibid(url, start_page, end_page)
             elif site == "BiddingKings": 
-                loop = asyncio.get_event_loop()
-                loop.run_until_complete(self.scrape_biddingkings_async(url, start_page, end_page))
+                self.scrape_biddingkings(url, start_page, end_page)
             elif site == "BidLlama": 
-                loop = asyncio.get_event_loop()
-                loop.run_until_complete(self.scrape_bidllama_async(url, start_page, end_page))
+                self.scrape_bidllama(url, start_page, end_page)
             elif site == "Nellis": 
                 self.scrape_nellis(url, start_page, end_page)
             elif site == "BidFTA": 
                 self.scrape_bidfta(url, start_page, end_page)
             elif site == "MAC.bid": 
-                loop = asyncio.get_event_loop()
-                loop.run_until_complete(self.scrape_macbid_async(url, start_page, end_page))
+                self.scrape_macbid(url, start_page, end_page)
             elif site == "A-Stock":
                 self.scrape_astock(url, start_page, end_page)
             elif site == "702Auctions":
                 self.scrape_702auctions(url, start_page, end_page)
             elif site == "Vista":
-                loop = asyncio.get_event_loop()
-                loop.run_until_complete(self.scrape_vista_async(url, start_page, end_page))
+                self.scrape_vista(url, start_page, end_page)
             elif site == "BidSoflo":
-                loop = asyncio.get_event_loop()
-                loop.run_until_complete(self.scrape_bidsoflo_async(url, start_page, end_page))
+                self.scrape_bidsoflo(url, start_page, end_page)
             elif site == "BidAuctionDepot":
-                loop = asyncio.get_event_loop()
-                loop.run_until_complete(self.scrape_bidauctiondepot_async(url, start_page, end_page))
+                self.scrape_bidauctiondepot(url, start_page, end_page)
         except Exception as e:
             self.ui['status'].error(f"An unexpected error occurred during scraping: {e}")
             traceback.print_exc()
         finally:
             if self.browser:
-                loop = asyncio.get_event_loop()
-                loop.run_until_complete(self.browser.close())
+                try:
+                    self.loop.run_until_complete(self.browser.close())
+                    self.loop.run_until_complete(self.playwright.stop())
+                except:
+                    pass
         return self.products
 
     def process_item(self, title, product_url, image_url, sold_price_text, item_index, total_items_on_page, category=None):
@@ -305,6 +276,7 @@ class AuctionScraper:
             self.ui['status'].warning(f"Skipping item '{title[:30]}...' due to error: {e}")
 
     def process_item_no_ai(self, title, product_url, sold_price_text, retail_price_text, item_index, total_items_on_page, category=None):
+        """Process items that already have retail prices (no AI needed)"""
         try:
             self.ui['status'].info(f"Processing item {item_index}/{total_items_on_page}: {title[:40]}...")
             sold_price_float = round(float(sold_price_text.replace("$", "").replace("USD", "").replace(",", "").strip()), 2)
@@ -337,23 +309,25 @@ class AuctionScraper:
         except Exception as e:
             self.ui['status'].warning(f"Skipping item '{title[:30]}...' due to error: {e}")
 
-    # AI-Powered Scrapers with Pyppeteer
-    async def scrape_hibid_async(self, url, start_page, end_page):
+    # AI-Powered Scrapers (HiBid, BiddingKings, BidLlama)
+    def scrape_hibid(self, url, start_page, end_page):
         base_url = url.split("/catalog")[0]
         page = start_page
         while self.running and (end_page == 0 or page <= end_page):
             self.ui['status'].info(f"Navigating to HiBid Page: {page}...")
             current_url = f"{url}{'&' if '?' in url else '?'}apage={page}"
-            await self.navigate_to(current_url)
+            
+            self.loop.run_until_complete(self.page.goto(current_url, wait_until='networkidle', timeout=60000))
             self.ui['metrics']['pages'].metric("Pages Scraped", page)
             
-            element_found = await self.wait_for_element("h2.lot-title", timeout=40000)
-            if not element_found:
+            try:
+                self.loop.run_until_complete(self.page.wait_for_selector("h2.lot-title", timeout=40000))
+            except:
                 self.ui['status'].success("No more pages found. Scraping complete.")
                 break
 
-            html_content = await self.get_page_content()
-            soup = BeautifulSoup(html_content, 'html.parser')
+            html = self.loop.run_until_complete(self.page.content())
+            soup = BeautifulSoup(html, 'html.parser')
             products = [p for p in soup.find_all("app-lot-tile") if p.find("strong", class_="lot-price-realized")]
             if not products:
                 self.ui['status'].success("No more items with prices on this page. Scraping complete.")
@@ -375,56 +349,7 @@ class AuctionScraper:
                         item_index=i,
                         total_items_on_page=len(products)
                     )
-                await asyncio.sleep(0.5)
-            page += 1
-
-    async def scrape_biddingkings_async(self, url, start_page, end_page):
-        base_url = "https://auctions.biddingkings.com"
-        page = start_page
-        while self.running and (end_page == 0 or page <= end_page):
-            current_url = f"{url}?page={page}"
-            self.ui['status'].info(f"Scraping BiddingKings Page: {page}")
-            self.ui['metrics']['pages'].metric("Pages Scraped", page)
-            
-            await self.navigate_to(current_url)
-            await asyncio.sleep(3)
-            
-            element_found = await self.wait_for_element("div[class*='lot-repeater-index']", timeout=40000)
-            if not element_found:
-                self.ui['status'].success("No more pages found. Scraping complete.")
-                break
-            
-            html_content = await self.get_page_content()
-            soup = BeautifulSoup(html_content, 'html.parser')
-            products = soup.find_all("div", class_=re.compile(r'lot-repeater-index'))
-            if not products:
-                self.ui['status'].success("No more items. Scraping complete.")
-                break
-                
-            for i, p in enumerate(products, 1):
-                if not self.running: break
-                link_tag = p.find("a")
-                img_tag = p.find("img")
-                
-                if link_tag and img_tag:
-                    title = link_tag.text.strip()
-                    product_url = base_url + link_tag.get("href")
-                    
-                    await self.navigate_to(product_url)
-                    product_html = await self.get_page_content()
-                    product_soup = BeautifulSoup(product_html, 'html.parser')
-                    price_tag = product_soup.find("span", class_="sold-amount")
-                    
-                    if price_tag:
-                        self.process_item(
-                            title=title,
-                            product_url=product_url,
-                            image_url=img_tag.get('ng-src'),
-                            sold_price_text=price_tag.text,
-                            item_index=i,
-                            total_items_on_page=len(products)
-                        )
-                await asyncio.sleep(0.5)
+                time.sleep(0.5)
             page += 1
 
     def generate_next_bidllama_urls(self, original_url, total_pages=500):
@@ -444,7 +369,57 @@ class AuctionScraper:
         except Exception:
             return [original_url]
 
-    async def scrape_bidllama_async(self, url, start_page, end_page):
+    def scrape_biddingkings(self, url, start_page, end_page):
+        base_url = "https://auctions.biddingkings.com"
+        page = start_page
+        while self.running and (end_page == 0 or page <= end_page):
+            current_url = f"{url}?page={page}"
+            self.ui['status'].info(f"Scraping BiddingKings Page: {page}")
+            self.ui['metrics']['pages'].metric("Pages Scraped", page)
+            
+            self.loop.run_until_complete(self.page.goto(current_url, wait_until='networkidle', timeout=60000))
+            time.sleep(3)
+            
+            try:
+                self.loop.run_until_complete(self.page.wait_for_selector("div[class*='lot-repeater-index']", timeout=40000))
+            except:
+                self.ui['status'].success("No more pages found. Scraping complete.")
+                break
+            
+            html = self.loop.run_until_complete(self.page.content())
+            soup = BeautifulSoup(html, 'html.parser')
+            products = soup.find_all("div", class_=re.compile(r'lot-repeater-index'))
+            if not products:
+                self.ui['status'].success("No more items. Scraping complete.")
+                break
+                
+            for i, p in enumerate(products, 1):
+                if not self.running: break
+                link_tag = p.find("a")
+                img_tag = p.find("img")
+                
+                if link_tag and img_tag:
+                    title = link_tag.text.strip()
+                    product_url = base_url + link_tag.get("href")
+                    
+                    self.loop.run_until_complete(self.page.goto(product_url, wait_until='networkidle', timeout=60000))
+                    product_html = self.loop.run_until_complete(self.page.content())
+                    product_soup = BeautifulSoup(product_html, 'html.parser')
+                    price_tag = product_soup.find("span", class_="sold-amount")
+                    
+                    if price_tag:
+                        self.process_item(
+                            title=title,
+                            product_url=product_url,
+                            image_url=img_tag.get('ng-src'),
+                            sold_price_text=price_tag.text,
+                            item_index=i,
+                            total_items_on_page=len(products)
+                        )
+                time.sleep(0.5)
+            page += 1
+
+    def scrape_bidllama(self, url, start_page, end_page):
         base_url = "https://bid.bidllama.com"
         page = start_page
         paginated_urls = self.generate_next_bidllama_urls(url)
@@ -458,16 +433,17 @@ class AuctionScraper:
             self.ui['status'].info(f"Scraping BidLlama Page: {page}")
             self.ui['metrics']['pages'].metric("Pages Scraped", page)
             
-            await self.navigate_to(current_url)
-            await asyncio.sleep(5)
+            self.loop.run_until_complete(self.page.goto(current_url, wait_until='networkidle', timeout=60000))
+            time.sleep(5)
             
-            element_found = await self.wait_for_element("p.item-lot-number", timeout=40000)
-            if not element_found:
+            try:
+                self.loop.run_until_complete(self.page.wait_for_selector("p.item-lot-number", timeout=40000))
+            except:
                 self.ui['status'].success("No more pages found. Scraping complete.")
                 break
             
-            html_content = await self.get_page_content()
-            soup = BeautifulSoup(html_content, 'html.parser')
+            html = self.loop.run_until_complete(self.page.content())
+            soup = BeautifulSoup(html, 'html.parser')
             item_container = soup.find("div", class_="item-row grid")
             if not item_container:
                 self.ui['status'].success("No item container found on page. Scraping complete.")
@@ -501,419 +477,10 @@ class AuctionScraper:
                             item_index=i,
                             total_items_on_page=len(products)
                         )
-                await asyncio.sleep(0.5)
+                time.sleep(0.5)
             page += 1
 
-    async def scrape_macbid_async(self, url, start_page, end_page):
-        try:
-            self.ui['status'].info("Starting MAC.bid scraper with browser...")
-            
-            current_url = url
-            if not current_url.startswith("http"):
-                current_url = f"https://{current_url}"
-            
-            await self.navigate_to(current_url)
-            base_url = "https://www.mac.bid"
-            
-            prev_product_count = 0
-            page = start_page
-            products_found = []
-            
-            self.ui['metrics']['pages'].metric("Pages Scraped", page)
-            
-            while self.running:
-                self.ui['status'].info(f"Loading MAC.bid page {page}...")
-                html_content = await self.get_page_content()
-                soup = BeautifulSoup(html_content, 'html.parser')
-                products = soup.find_all("div", class_="d-block w-100 border-bottom")
-                
-                self.ui['metrics']['pages'].metric("Pages Scraped", page)
-                
-                if len(products) != prev_product_count:
-                    prev_product_count = len(products)
-                    await self.scroll_to_bottom()
-                    await asyncio.sleep(1)
-                else:
-                    if soup.find("div", class_="spinner-grow") is None:
-                        products_found = products
-                        break
-                    else:
-                        await asyncio.sleep(2)
-            
-            total_products = len(products_found)
-            processed = 0
-            
-            for product in products_found:
-                if not self.running:
-                    break
-                
-                try:
-                    if product.find("p", class_="badge badge-success") is not None:
-                        title = product.find("p").text.strip()
-                        sold_price = product.find("p", class_="badge badge-success").text.replace("Won for $", "").strip()
-                        retail_price = product.find("p", class_="font-size-sm").text.replace("Retails for $", "").strip()
-                        link_tag = product.find("a")
-                        link = base_url + link_tag["href"] if link_tag and link_tag.get("href") else ""
-                        
-                        self.process_item_no_ai(
-                            title=title,
-                            product_url=link,
-                            sold_price_text=sold_price,
-                            retail_price_text=retail_price,
-                            item_index=processed + 1,
-                            total_items_on_page=total_products
-                        )
-                    
-                    processed += 1
-                    await asyncio.sleep(0.1)
-                    
-                except Exception as e:
-                    self.ui['status'].warning(f"Error processing product {processed+1}: {str(e)}")
-                    processed += 1
-                
-        except Exception as e:
-            self.ui['status'].error(f"Error in MAC.bid scraper: {str(e)}")
-
-    async def scrape_vista_async(self, url, start_page, end_page):
-        base_url = url.split("?")[0]
-        vista_base_url = "https://vistaauction.com"
-        page = start_page - 1 if start_page > 0 else 0
-        
-        while self.running and (end_page == 0 or page < end_page):
-            try:
-                current_url = f"{base_url}?page={page}"
-                self.ui['status'].info(f"Fetching Vista Auction page {page}...")
-                
-                await self.navigate_to(current_url)
-                await asyncio.sleep(5)
-                
-                html_content = await self.get_page_content()
-                soup = BeautifulSoup(html_content, "html.parser")
-                sections = soup.find_all("section")
-                
-                if not sections:
-                    self.ui['status'].success("No more items found on this page. Ending scrape.")
-                    break
-                
-                self.ui['metrics']['pages'].metric("Pages Scraped", page + 1)
-                
-                total_sections = len(sections)
-                self.ui['status'].info(f"Found {total_sections} items on page {page}")
-                
-                for i, section in enumerate(sections, 1):
-                    if not self.running:
-                        break
-                        
-                    try:
-                        title_elem = section.find("h2", class_="title inlinebidding")
-                        if title_elem:
-                            raw_title = title_elem.text.strip()
-                            title = re.sub(r'^Lot \d+\s*-\s*', '', raw_title).strip()
-                        else:
-                            continue
-
-                        linker_elem = section.find("h3", class_="subtitle")
-                        linker = "N/A"
-                        if linker_elem:
-                            link_tag = linker_elem.find("a")
-                            if link_tag:
-                                link_href = link_tag.get("href")
-                                if link_href and not link_href.startswith("http"):
-                                    linker = vista_base_url + link_href
-                                else:
-                                    linker = link_href if link_href else "N/A"
-
-                        sold_price_elem = section.find("span", class_="NumberPart")
-                        if not sold_price_elem:
-                            continue
-                            
-                        sold_price_text = sold_price_elem.text.strip()
-                        sold_price_match = re.search(r'\$?([\d,]+\.?\d*)', sold_price_text)
-                        if sold_price_match:
-                            sold_price_str = sold_price_match.group(1).replace(',', '')
-                            sold_price_float = float(sold_price_str)
-                        else:
-                            continue
-                        
-                        retail_price_elem = section.find("h3", class_="subtitle")
-                        if not retail_price_elem:
-                            continue
-
-                        retail_price_text = retail_price_elem.text.strip()
-                        retail_price_match = re.search(r'\$?([\d,]+\.?\d*)', retail_price_text)
-                        if retail_price_match:
-                            retail_price_str = retail_price_match.group(1).replace(',', '')
-                            retail_price_float = float(retail_price_str)
-                        else:
-                            continue
-                        
-                        self.process_item_no_ai(
-                            title=title,
-                            product_url=linker,
-                            sold_price_text=str(sold_price_float),
-                            retail_price_text=str(retail_price_float),
-                            item_index=i,
-                            total_items_on_page=total_sections
-                        )
-                        
-                    except Exception as e:
-                        continue
-                
-                page += 1
-                
-            except Exception as e:
-                self.ui['status'].error(f"Error fetching page {page}: {str(e)}")
-                break
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-async def scrape_bidsoflo_async(self, url, start_page, end_page):
-        base_url = "https://bid.bidsoflo.us"
-        current_url = url
-        page = start_page
-        
-        self.ui['status'].info("Starting BidSoflo scraper...")
-        await self.navigate_to(current_url)
-        await asyncio.sleep(2)
-        
-        while self.running and (end_page == 0 or page <= end_page):
-            try:
-                page_flag = False
-                self.ui['status'].info(f"Fetching BidSoflo page {page}")
-                
-                html_content = await self.get_page_content()
-                soup = BeautifulSoup(html_content, 'html.parser')
-                
-                products = soup.find_all("div", class_="row mr-1")
-                
-                # Check for next page
-                tmp_page = soup.find_all("li", class_="page-item")
-                for pa in tmp_page:
-                    if "next" in pa.text.lower():
-                        urlz = pa.find("a", class_="page-link")
-                        if urlz is not None:
-                            urlz = urlz["data-url"].split("page=")[-1]
-                            t_url = current_url.split("=")[-1]
-                            current_url = current_url.replace(t_url, urlz)
-                            page_flag = True
-                        else:
-                            page_flag = False
-                
-                self.ui['metrics']['pages'].metric("Pages Scraped", page)
-                
-                total_products = len(products)
-                self.ui['status'].info(f"Found {total_products} items on page {page}")
-                
-                product_count = 0
-                for i, p in enumerate(products, 1):
-                    if not self.running:
-                        break
-                        
-                    try:
-                        if p.find("div", class_="tooltip-demos") is not None:
-                            tool = p.find("div", class_="tooltip-demos")
-                            tmp = tool.find_all("div", recursive=False)
-                            
-                            title = " "
-                            for xi in tmp:
-                                if "Item Description" in xi.text:
-                                    title = xi.text.replace("Item Description", "").strip()
-                                    break
-                                    
-                            if title != " ":
-                                retail_price = " "
-                                for xi in tmp:
-                                    if "Retail Cost:" in xi.text:
-                                        retail_price = xi.text.replace("Retail Cost:", "").replace("$", "").strip()
-                                        break
-                                
-                                if retail_price != " ":
-                                    sold_price = " "
-                                    tmp_price = p.find("div", class_="font-bold text-body")
-                                    if tmp_price is not None:
-                                        if "Final Bid :" in tmp_price.text:
-                                            sold_price = tmp_price.text.replace("Final Bid :", "").replace("$", "").strip()
-                                            
-                                            if sold_price != " ":
-                                                try:
-                                                    sold_price_float = float(sold_price.replace("$", "").replace(",", ""))
-                                                    retail_price_float = float(retail_price.replace("$", "").replace(",", ""))
-                                                except (ValueError, ZeroDivisionError):
-                                                    continue
-                                                
-                                                link_tag = p.find("a")
-                                                link = base_url + link_tag["href"] if link_tag and link_tag.get("href") else "N/A"
-                                                
-                                                self.process_item_no_ai(
-                                                    title=title,
-                                                    product_url=link,
-                                                    sold_price_text=str(sold_price_float),
-                                                    retail_price_text=str(retail_price_float),
-                                                    item_index=product_count + 1,
-                                                    total_items_on_page=total_products
-                                                )
-                                                
-                                                product_count += 1
-                    
-                    except Exception as e:
-                        self.ui['status'].warning(f"Error processing item {i}: {str(e)}")
-                        continue
-                
-                self.ui['status'].info(f"Processed {product_count} valid items on page {page}")
-                
-                if page_flag:
-                    self.ui['status'].info(f"Moving to page {page+1}...")
-                    await self.navigate_to(current_url)
-                    page += 1
-                    await asyncio.sleep(2)
-                else:
-                    self.ui['status'].success("No more pages to fetch.")
-                    break
-                    
-            except Exception as e:
-                self.ui['status'].error(f"Error on page {page}: {str(e)}")
-                break
-
-async def scrape_bidauctiondepot_async(self, url, start_page, end_page):
-    if True:
-        base_url = "https://bidauctiondepot.com/productView/"
-        page = start_page
-        lot_id = ""
-        flag = True
-        
-        self.ui['status'].info("Starting BidAuctionDepot scraper...")
-        await self.navigate_to(url)
-        await asyncio.sleep(3)
-        
-        while self.running and flag and (end_page == 0 or page <= end_page):
-            try:
-                self.ui['status'].info(f"Fetching BidAuctionDepot page {page}")
-                
-                element_found = await self.wait_for_element('div[class^="card grid-card a gallery auction"]', timeout=25000)
-                if element_found:
-                    self.ui['status'].info("Product cards loaded successfully")
-                else:
-                    self.ui['status'].error("Timeout waiting for products")
-                            
-                html_content = await self.get_page_content()
-                soup = BeautifulSoup(html_content, 'html.parser')
-                
-                products = soup.find_all('div', class_=lambda c: c and "card grid-card a gallery auction" in c)
-                
-                if not products:
-                    self.ui['status'].success("No products found. Scraping complete.")
-                    break
-                
-                self.ui['metrics']['pages'].metric("Pages Scraped", page)
-                
-                total_products = len(products)
-                self.ui['status'].info(f"Found {total_products} items on page {page}")
-                
-                for i, p in enumerate(products, 1):
-                    if not self.running:
-                        break
-                        
-                    try:
-                        title_elem = p.find("h5")
-                        if not title_elem:
-                            continue
-                            
-                        title = title_elem.text.strip()
-                        
-                        retail_price_elem = p.select_one("h6.galleryPrice.rtlrPrice")
-                        if not retail_price_elem:
-                            continue
-                            
-                        retail_price_text = retail_price_elem.text.replace("Retail Price:", "").replace("$", "").replace(",", "").strip()
-                        
-                        try:
-                            retail_price_float = float(retail_price_text)
-                        except ValueError:
-                            continue
-                        
-                        sold_price_elem = p.find("span", class_="curBidAmtt")
-                        if not sold_price_elem:
-                            continue
-                            
-                        sold_price_text = sold_price_elem.text.replace("Current Bid:", "").replace("$", "").replace(",", "").strip()
-                        
-                        try:
-                            sold_price_float = float(sold_price_text)
-                        except ValueError:
-                            continue
-                        
-                        link_elem = p.get("id")
-                        if not link_elem:
-                            continue
-                            
-                        link_id = link_elem.replace("lot-", "")
-                        
-                        if lot_id == link_id:
-                            self.ui['status'].warning("Duplicate lot found. Ending scrape.")
-                            flag = False
-                            break
-                        else:
-                            lot_id = link_id
-                        
-                        link = base_url + link_id
-                        
-                        self.process_item_no_ai(
-                            title=title,
-                            product_url=link,
-                            sold_price_text=str(sold_price_float),
-                            retail_price_text=str(retail_price_float),
-                            item_index=i,
-                            total_items_on_page=total_products
-                        )
-                        
-                    except Exception as e:
-                        self.ui['status'].warning(f"Error processing item {i}: {str(e)}")
-                        continue
-                
-                if not flag:
-                    break
-                
-                # Handle pagination
-                try:
-                    # Check if next page exists
-                    html_check = await self.page.evaluate(
-                        """
-                        () => document.querySelector("a[aria-label='Go to next page']") !== null
-                        """
-                    )
-                    
-                    if html_check:
-                        await self.click_element("a[aria-label='Go to next page']")
-                        page += 1
-                        await asyncio.sleep(3)
-                        self.ui['status'].info(f"Navigating to page {page}")
-                    else:
-                        self.ui['status'].success("No more pages to scrape.")
-                        break
-                except Exception as e:
-                    self.ui['status'].warning("Error during pagination, stopping scraper.")
-                    break
-                    
-            except Exception as e:
-                self.ui['status'].error(f"Error on page {page}: {str(e)}")
-                break
-
-    # Non-browser scrapers (use requests - no changes needed)
+    # Direct Price Scrapers (Nellis, BidFTA, MAC.bid, A-Stock, 702Auctions)
     def scrape_nellis(self, url, start_page, end_page):
         """Scrape Nellis Auction - uses requests (no AI needed, has retail prices)"""
         base_url = "https://www.nellisauction.com"
@@ -947,7 +514,6 @@ async def scrape_bidauctiondepot_async(self, url, start_page, end_page):
                         
                 self.ui['metrics']['pages'].metric("Pages Scraped", page)
                 
-                # Find next page
                 pagination_links = soup.find_all("a", class_="__pagination-link")
                 next_page = None
                 
@@ -970,7 +536,6 @@ async def scrape_bidauctiondepot_async(self, url, start_page, end_page):
                 self.ui['status'].error(f"Error while fetching page {page}: {str(e)}")
                 break
         
-        # Process individual products
         total_products = len(links)
         processed = 0
         
@@ -1084,7 +649,6 @@ async def scrape_bidauctiondepot_async(self, url, start_page, end_page):
                 self.ui['status'].error(f"Error while fetching page {page}: {str(e)}")
                 break
         
-        # Process individual products
         total_products = len(links)
         processed = 0
         
@@ -1140,6 +704,77 @@ async def scrape_bidauctiondepot_async(self, url, start_page, end_page):
             except Exception as e:
                 self.ui['status'].warning(f"Error processing product {processed+1}: {str(e)}")
                 processed += 1
+
+    def scrape_macbid(self, url, start_page, end_page):
+        """Scrape MAC.bid - uses playwright (no AI needed, has retail prices)"""
+        try:
+            self.ui['status'].info("Starting MAC.bid scraper with browser...")
+            
+            current_url = url
+            if not current_url.startswith("http"):
+                current_url = f"https://{current_url}"
+            
+            self.loop.run_until_complete(self.page.goto(current_url, wait_until='networkidle', timeout=60000))
+            base_url = "https://www.mac.bid"
+            
+            prev_product_count = 0
+            page = start_page
+            products_found = []
+            
+            self.ui['metrics']['pages'].metric("Pages Scraped", page)
+            
+            while self.running:
+                self.ui['status'].info(f"Loading MAC.bid page {page}...")
+                html = self.loop.run_until_complete(self.page.content())
+                soup = BeautifulSoup(html, 'html.parser')
+                products = soup.find_all("div", class_="d-block w-100 border-bottom")
+                
+                self.ui['metrics']['pages'].metric("Pages Scraped", page)
+                
+                if len(products) != prev_product_count:
+                    prev_product_count = len(products)
+                    self.loop.run_until_complete(self.page.evaluate('window.scrollTo(0, document.body.scrollHeight)'))
+                    time.sleep(1)
+                else:
+                    if soup.find("div", class_="spinner-grow") is None:
+                        products_found = products
+                        break
+                    else:
+                        time.sleep(2)
+            
+            total_products = len(products_found)
+            processed = 0
+            
+            for product in products_found:
+                if not self.running:
+                    break
+                
+                try:
+                    if product.find("p", class_="badge badge-success") is not None:
+                        title = product.find("p").text.strip()
+                        sold_price = product.find("p", class_="badge badge-success").text.replace("Won for $", "").strip()
+                        retail_price = product.find("p", class_="font-size-sm").text.replace("Retails for $", "").strip()
+                        link_tag = product.find("a")
+                        link = base_url + link_tag["href"] if link_tag and link_tag.get("href") else ""
+                        
+                        self.process_item_no_ai(
+                            title=title,
+                            product_url=link,
+                            sold_price_text=sold_price,
+                            retail_price_text=retail_price,
+                            item_index=processed + 1,
+                            total_items_on_page=total_products
+                        )
+                    
+                    processed += 1
+                    time.sleep(0.1)
+                    
+                except Exception as e:
+                    self.ui['status'].warning(f"Error processing product {processed+1}: {str(e)}")
+                    processed += 1
+                
+        except Exception as e:
+            self.ui['status'].error(f"Error in MAC.bid scraper: {str(e)}")
 
     def scrape_astock(self, url, start_page, end_page):
         """Scrape A-Stock.bid - uses requests (no AI needed, has retail prices)"""
@@ -1337,4 +972,325 @@ async def scrape_bidauctiondepot_async(self, url, start_page, end_page):
                 
             except Exception as e:
                 self.ui['status'].error(f"Error fetching page {page}: {str(e)}")
+                break
+
+    def scrape_vista(self, url, start_page, end_page):
+        """Scrape Vista Auction - uses playwright"""
+        base_url = url.split("?")[0]
+        vista_base_url = "https://vistaauction.com"
+        page = start_page - 1 if start_page > 0 else 0
+        
+        while self.running and (end_page == 0 or page < end_page):
+            try:
+                current_url = f"{base_url}?page={page}"
+                self.ui['status'].info(f"Fetching Vista Auction page {page}...")
+                
+                self.loop.run_until_complete(self.page.goto(current_url, wait_until='networkidle', timeout=60000))
+                time.sleep(5)
+                
+                html = self.loop.run_until_complete(self.page.content())
+                soup = BeautifulSoup(html, "html.parser")
+                sections = soup.find_all("section")
+                
+                if not sections:
+                    self.ui['status'].success("No more items found on this page. Ending scrape.")
+                    break
+                
+                self.ui['metrics']['pages'].metric("Pages Scraped", page + 1)
+                
+                total_sections = len(sections)
+                self.ui['status'].info(f"Found {total_sections} items on page {page}")
+                
+                for i, section in enumerate(sections, 1):
+                    if not self.running:
+                        break
+                        
+                    try:
+                        title_elem = section.find("h2", class_="title inlinebidding")
+                        if title_elem:
+                            raw_title = title_elem.text.strip()
+                            title = re.sub(r'^Lot \d+\s*-\s*', '', raw_title).strip()
+                        else:
+                            continue
+
+                        linker_elem = section.find("h3", class_="subtitle")
+                        linker = "N/A"
+                        if linker_elem:
+                            link_tag = linker_elem.find("a")
+                            if link_tag:
+                                link_href = link_tag.get("href")
+                                if link_href and not link_href.startswith("http"):
+                                    linker = vista_base_url + link_href
+                                else:
+                                    linker = link_href if link_href else "N/A"
+
+                        sold_price_elem = section.find("span", class_="NumberPart")
+                        if not sold_price_elem:
+                            continue
+                            
+                        sold_price_text = sold_price_elem.text.strip()
+                        sold_price_match = re.search(r'\$?([\d,]+\.?\d*)', sold_price_text)
+                        if sold_price_match:
+                            sold_price_str = sold_price_match.group(1).replace(',', '')
+                            sold_price_float = float(sold_price_str)
+                        else:
+                            continue
+                        
+                        retail_price_elem = section.find("h3", class_="subtitle")
+                        if not retail_price_elem:
+                            continue
+
+                        retail_price_text = retail_price_elem.text.strip()
+                        retail_price_match = re.search(r'\$?([\d,]+\.?\d*)', retail_price_text)
+                        if retail_price_match:
+                            retail_price_str = retail_price_match.group(1).replace(',', '')
+                            retail_price_float = float(retail_price_str)
+                        else:
+                            continue
+                        
+                        self.process_item_no_ai(
+                            title=title,
+                            product_url=linker,
+                            sold_price_text=str(sold_price_float),
+                            retail_price_text=str(retail_price_float),
+                            item_index=i,
+                            total_items_on_page=total_sections
+                        )
+                        
+                    except Exception as e:
+                        continue
+                
+                page += 1
+                
+            except Exception as e:
+                self.ui['status'].error(f"Error fetching page {page}: {str(e)}")
+                break
+
+    def scrape_bidsoflo(self, url, start_page, end_page):
+        """Scrape BidSoflo - uses playwright (no AI needed, has retail prices)"""
+        base_url = "https://bid.bidsoflo.us"
+        current_url = url
+        page = start_page
+        
+        self.ui['status'].info("Starting BidSoflo scraper...")
+        self.loop.run_until_complete(self.page.goto(current_url, wait_until='networkidle', timeout=60000))
+        time.sleep(2)
+        
+        while self.running and (end_page == 0 or page <= end_page):
+            try:
+                page_flag = False
+                self.ui['status'].info(f"Fetching BidSoflo page {page}")
+                
+                html = self.loop.run_until_complete(self.page.content())
+                soup = BeautifulSoup(html, 'html.parser')
+                
+                products = soup.find_all("div", class_="row mr-1")
+                
+                tmp_page = soup.find_all("li", class_="page-item")
+                for pa in tmp_page:
+                    if "next" in pa.text.lower():
+                        urlz = pa.find("a", class_="page-link")
+                        if urlz is not None:
+                            urlz = urlz["data-url"].split("page=")[-1]
+                            t_url = current_url.split("=")[-1]
+                            current_url = current_url.replace(t_url, urlz)
+                            page_flag = True
+                        else:
+                            page_flag = False
+                
+                self.ui['metrics']['pages'].metric("Pages Scraped", page)
+                
+                total_products = len(products)
+                self.ui['status'].info(f"Found {total_products} items on page {page}")
+                
+                product_count = 0
+                for i, p in enumerate(products, 1):
+                    if not self.running:
+                        break
+                        
+                    try:
+                        if p.find("div", class_="tooltip-demos") is not None:
+                            tool = p.find("div", class_="tooltip-demos")
+                            tmp = tool.find_all("div", recursive=False)
+                            
+                            title = " "
+                            for xi in tmp:
+                                if "Item Description" in xi.text:
+                                    title = xi.text.replace("Item Description", "").strip()
+                                    break
+                                    
+                            if title != " ":
+                                retail_price = " "
+                                for xi in tmp:
+                                    if "Retail Cost:" in xi.text:
+                                        retail_price = xi.text.replace("Retail Cost:", "").replace("$", "").strip()
+                                        break
+                                
+                                if retail_price != " ":
+                                    sold_price = " "
+                                    tmp_price = p.find("div", class_="font-bold text-body")
+                                    if tmp_price is not None:
+                                        if "Final Bid :" in tmp_price.text:
+                                            sold_price = tmp_price.text.replace("Final Bid :", "").replace("$", "").strip()
+                                            
+                                            if sold_price != " ":
+                                                try:
+                                                    sold_price_float = float(sold_price.replace("$", "").replace(",", ""))
+                                                    retail_price_float = float(retail_price.replace("$", "").replace(",", ""))
+                                                except (ValueError, ZeroDivisionError):
+                                                    continue
+                                                
+                                                link_tag = p.find("a")
+                                                link = base_url + link_tag["href"] if link_tag and link_tag.get("href") else "N/A"
+                                                
+                                                self.process_item_no_ai(
+                                                    title=title,
+                                                    product_url=link,
+                                                    sold_price_text=str(sold_price_float),
+                                                    retail_price_text=str(retail_price_float),
+                                                    item_index=product_count + 1,
+                                                    total_items_on_page=total_products
+                                                )
+                                                
+                                                product_count += 1
+                    
+                    except Exception as e:
+                        self.ui['status'].warning(f"Error processing item {i}: {str(e)}")
+                        continue
+                
+                self.ui['status'].info(f"Processed {product_count} valid items on page {page}")
+                
+                if page_flag:
+                    self.ui['status'].info(f"Moving to page {page+1}...")
+                    self.loop.run_until_complete(self.page.goto(current_url, wait_until='networkidle', timeout=60000))
+                    page += 1
+                    time.sleep(2)
+                else:
+                    self.ui['status'].success("No more pages to fetch.")
+                    break
+                    
+            except Exception as e:
+                self.ui['status'].error(f"Error on page {page}: {str(e)}")
+                break
+
+    def scrape_bidauctiondepot(self, url, start_page, end_page):
+        """Scrape BidAuctionDepot - uses playwright (no AI needed, has retail prices)"""
+        base_url = "https://bidauctiondepot.com/productView/"
+        page = start_page
+        lot_id = ""
+        flag = True
+        
+        self.ui['status'].info("Starting BidAuctionDepot scraper...")
+        self.loop.run_until_complete(self.page.goto(url, wait_until='networkidle', timeout=60000))
+        time.sleep(3)
+        
+        while self.running and flag and (end_page == 0 or page <= end_page):
+            try:
+                self.ui['status'].info(f"Fetching BidAuctionDepot page {page}")
+                
+                try:
+                    self.loop.run_until_complete(self.page.wait_for_selector('div[class^="card grid-card a gallery auction"]', timeout=25000))
+                    self.ui['status'].info("Product cards loaded successfully")
+                except Exception as e:
+                    self.ui['status'].error(f"Error waiting for products: {str(e)}")
+                            
+                html = self.loop.run_until_complete(self.page.content())
+                soup = BeautifulSoup(html, 'html.parser')
+                
+                products = soup.find_all('div', class_=lambda c: c and "card grid-card a gallery auction" in c)
+                
+                if not products:
+                    self.ui['status'].success("No products found. Scraping complete.")
+                    break
+                
+                self.ui['metrics']['pages'].metric("Pages Scraped", page)
+                
+                total_products = len(products)
+                self.ui['status'].info(f"Found {total_products} items on page {page}")
+                
+                for i, p in enumerate(products, 1):
+                    if not self.running:
+                        break
+                        
+                    try:
+                        title_elem = p.find("h5")
+                        if not title_elem:
+                            continue
+                            
+                        title = title_elem.text.strip()
+                        
+                        retail_price_elem = p.select_one("h6.galleryPrice.rtlrPrice")
+                        if not retail_price_elem:
+                            continue
+                            
+                        retail_price_text = retail_price_elem.text.replace("Retail Price:", "").replace("$", "").replace(",", "").strip()
+                        
+                        try:
+                            retail_price_float = float(retail_price_text)
+                        except ValueError:
+                            continue
+                        
+                        sold_price_elem = p.find("span", class_="curBidAmtt")
+                        if not sold_price_elem:
+                            continue
+                            
+                        sold_price_text = sold_price_elem.text.replace("Current Bid:", "").replace("$", "").replace(",", "").strip()
+                        
+                        try:
+                            sold_price_float = float(sold_price_text)
+                        except ValueError:
+                            continue
+                        
+                        link_elem = p.get("id")
+                        if not link_elem:
+                            continue
+                            
+                        link_id = link_elem.replace("lot-", "")
+                        
+                        if lot_id == link_id:
+                            self.ui['status'].warning("Duplicate lot found. Ending scrape.")
+                            flag = False
+                            break
+                        else:
+                            lot_id = link_id
+                        
+                        link = base_url + link_id
+                        
+                        self.process_item_no_ai(
+                            title=title,
+                            product_url=link,
+                            sold_price_text=str(sold_price_float),
+                            retail_price_text=str(retail_price_float),
+                            item_index=i,
+                            total_items_on_page=total_products
+                        )
+                        
+                    except Exception as e:
+                        self.ui['status'].warning(f"Error processing item {i}: {str(e)}")
+                        continue
+                
+                if not flag:
+                    break
+                
+                try:
+                    next_button_exists = self.loop.run_until_complete(
+                        self.page.evaluate('() => document.querySelector("a[aria-label=\'Go to next page\']") !== null')
+                    )
+                    
+                    if next_button_exists:
+                        self.loop.run_until_complete(
+                            self.page.evaluate('() => document.querySelector("a[aria-label=\'Go to next page\']").click()')
+                        )
+                        page += 1
+                        time.sleep(3)
+                        self.ui['status'].info(f"Navigating to page {page}")
+                    else:
+                        self.ui['status'].success("No more pages to scrape.")
+                        break
+                except Exception as e:
+                    self.ui['status'].warning("Error during pagination, stopping scraper.")
+                    break
+                    
+            except Exception as e:
+                self.ui['status'].error(f"Error on page {page}: {str(e)}")
                 break
