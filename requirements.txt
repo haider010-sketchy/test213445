@@ -1,6 +1,5 @@
 streamlit
-playwright
-tf-playwright-stealth
+undetected-chromedriver
 beautifulsoup4
 pandas
 google-genai
@@ -8,4 +7,5 @@ requests
 openpyxl
 supabase
 curl-cffi
+
 
