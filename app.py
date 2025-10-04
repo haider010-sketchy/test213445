@@ -9,23 +9,27 @@ import statistics
 import time
 import sys
 import importlib.util
+import traceback
 
 # Force clear cache and rerun
 st.cache_data.clear()
 st.cache_resource.clear()
 
 # --- Dependency Handling ---
-# Attempt to import the user's custom scraper class. If it fails, define a placeholder.
+# Attempt to import the user's custom scraper class. If it fails, show the actual error.
 try:
     from scraper import AuctionScraper
-except ImportError:
-    st.warning("`scraper.py` not found. Using a placeholder class for demonstration.")
+    SCRAPER_AVAILABLE = True
+except ImportError as e:
+    SCRAPER_AVAILABLE = False
+    st.error(f"Failed to import scraper.py - ImportError: {e}")
+    st.code(traceback.format_exc())
+    
     class AuctionScraper:
-        """A placeholder class to allow the application to run without the actual scraper.py file."""
         def __init__(self, gemini_api_keys=None, ui_placeholders=None):
             self._is_running = False
             self.ui_placeholders = ui_placeholders
-            st.toast("Mock Scraper Initialized.")
+            st.toast("Mock Scraper Initialized - scraper.py import failed.")
 
         def run(self, site_name, url, start, end):
             self._is_running = True
@@ -48,6 +52,21 @@ except ImportError:
         def stop(self):
             self._is_running = False
             st.toast("Mock scraping stop signal sent.")
+except Exception as e:
+    SCRAPER_AVAILABLE = False
+    st.error(f"Unexpected error importing scraper.py: {e}")
+    st.code(traceback.format_exc())
+    
+    class AuctionScraper:
+        def __init__(self, gemini_api_keys=None, ui_placeholders=None):
+            self._is_running = False
+            self.ui_placeholders = ui_placeholders
+
+        def run(self, site_name, url, start, end):
+            return []
+
+        def stop(self):
+            self._is_running = False
 
 # Attempt to import functions from amazon.py. If it fails, define placeholders.
 try:
@@ -59,9 +78,9 @@ try:
     AMAZON_AVAILABLE = True
 except Exception as e:
     st.error(f"Error loading amazon.py: {type(e).__name__}: {str(e)}")
-    import traceback
     st.code(traceback.format_exc())
     st.warning("`amazon.py` not found. Using placeholder functions for demonstration.")
+    
     def get_logo_base64():
         """Returns a base64 encoded string for a placeholder logo."""
         return "iVBORw0KGgoAAAANSUhEUgAAAQoAAAApCAYAAAD77MRbAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAHPSURBVHhe7dJBDQAgDAAxAbTj/ycqaKEtKEvcdDkHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADcsPTZfH/eAwbBGAwAYDAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgCAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAgMEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGBbfgAByAB2q0Bv/AAAAABJRU5ErkJggg=="
@@ -521,7 +540,7 @@ def create_scraper_ui(site_name, placeholder_url, is_ai=False, special_note=None
         url = st.text_input("🔗 Auction URL", placeholder=placeholder_url, key=f'url_{site_name}')
         col1, col2 = st.columns(2)
         start_page = col1.number_input("📄 Start Page", min_value=1, value=1, step=1, key=f'start_{site_name}')
-        end_page = col2.number_input("🔚 End Page (0 for no limit)", min_value=0, value=0, step=1, key=f'end_{site_name}')
+        end_page = col2.number_input("📚 End Page (0 for no limit)", min_value=0, value=0, step=1, key=f'end_{site_name}')
         
         if is_ai:
             st.info("ℹ️ AI-powered price detection is enabled with built-in Gemini API keys.")
@@ -544,7 +563,8 @@ def run_scraper(site_name, url, start_page, end_page, requires_ai=True):
     metric_cols = st.columns(3)
     pages_metric, lots_metric, recovery_metric = metric_cols[0].empty(), metric_cols[1].empty(), metric_cols[2].empty()
     dataframe_placeholder = st.empty()
-    
+
+
     pages_metric.metric("Pages Scraped", 0)
     lots_metric.metric("Lots Scraped", 0)
     recovery_metric.metric("Average Recovery", "0%")
@@ -561,10 +581,11 @@ def run_scraper(site_name, url, start_page, end_page, requires_ai=True):
     try:
         results = st.session_state.scraper_instance.run(site_name, url, start_page, end_page)
         st.session_state.results_df = pd.DataFrame(results) if results else pd.DataFrame()
-        if st.session_state.scraper_instance._is_running: # Check if it wasn't stopped
+        if st.session_state.scraper_instance._is_running:
             status_placeholder.success(f"Scraping complete! Found {len(results)} items.")
     except Exception as e:
         status_placeholder.error(f"An error occurred during scraping: {str(e)}")
+        st.code(traceback.format_exc())
     
     st.session_state.is_scraping = False
     st.rerun()
@@ -586,6 +607,10 @@ def show_welcome():
         "🎯 Comprehensive data collection and analysis tools for auction sites and e-commerce platforms. <br> 📊 Select a tool from the navigation panel to begin your analysis.",
         icon=" "
     )
+    
+    # Show scraper status
+    if not SCRAPER_AVAILABLE:
+        st.error("⚠️ **Scraper module is not available.** Some scrapers may not work. Check the error messages above for details.")
 
     # Feature Cards
     col1, col2, col3 = st.columns(3)
