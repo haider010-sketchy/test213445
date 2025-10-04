@@ -7,5 +7,6 @@ requests
 openpyxl
 supabase
 curl-cffi
+setuptools
 
 
