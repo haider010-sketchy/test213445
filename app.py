@@ -83,7 +83,7 @@ except Exception as e:
     
     def get_logo_base64():
         """Returns a base64 encoded string for a placeholder logo."""
-        return "iVBORw0KGgoAAAANSUhEUgAAAQoAAAApCAYAAAD77MRbAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAHPSURBVHhe7dJBDQAgDAAxAbTj/ycqaKEtKEvcdDkHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADcsPTZfH/eAwbBGAwAYDAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgCAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAgMEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGBbfgAByAB2q0Bv/AAAAABJRU5ErkJggg=="
+        return "iVBORw0KGgoAAAANSUhEUgAAAQoAAAApCAYAAAD77MRbAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAHPSURBVHhe7dJBDQAgDAAxAbTj/ycqaKEtKEvcdDkHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADcsPTZfH/eAwbBGAwAYDAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgCAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAgMEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGBbfgAByAB2q0Bv/AAAAABJRU5ErkJggg=="
 
     def render_upload_tab():
         st.info("This is the placeholder for the CSV upload functionality.")
@@ -211,8 +211,9 @@ st.markdown("""
         background: #1E1E1E; border-radius: 12px;
         border: 1px solid var(--sidebar-border);
     }
+    /* FIXED: Navigation section headers - make them visible against dark sidebar */
     .section-header {
-        font-size: 0.75rem; font-weight: 600; color: #CCCCCC !important;
+        font-size: 0.75rem; font-weight: 600; color: #999999 !important;
         text-transform: uppercase; letter-spacing: 0.1em; margin: 1.5rem 0 0.5rem 0;
         padding-left: 0.5rem;
     }
@@ -281,11 +282,44 @@ st.markdown("""
     }
     .stButton > button:hover,
     div[data-testid="stFormSubmitButton"] > button:hover {
-        opacity: 0.85; box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        background: #333333 !important; 
+        border-color: #333333 !important;
+        color: white !important;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
     }
     div[data-testid="stFormSubmitButton"] > button.st-emotion-cache-19rxjzo {
         background: var(--primary-action-color) !important;
         border-color: var(--primary-action-color) !important;
+        color: white !important;
+    }
+    div[data-testid="stFormSubmitButton"] > button.st-emotion-cache-19rxjzo:hover {
+        background: #E23938 !important;
+        border-color: #E23938 !important;
+        color: white !important;
+    }
+    
+    /* FIXED: Download button - prevent white background on hover */
+    .stDownloadButton > button {
+        background: var(--bg-color-dark-interactive) !important;
+        color: white !important;
+        border: 1px solid var(--bg-color-dark-interactive) !important;
+        border-radius: 10px !important;
+        padding: 0.75rem 1rem !important;
+        font-family: var(--font-family) !important;
+        font-weight: 500 !important;
+        transition: all 0.2s ease !important;
+    }
+    .stDownloadButton > button:hover {
+        background: #333333 !important;
+        border-color: #333333 !important;
+        color: white !important;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    }
+    
+    /* FIXED: All button text should be white on dark buttons */
+    button[kind="primary"],
+    button[kind="secondary"] {
+        color: white !important;
     }
     
     /* FIXED: Label colors for better visibility */
@@ -365,13 +399,35 @@ st.markdown("""
     .border-orange { border-top: 4px solid #F5A623; }
     
     /* FIXED: Ensure all text in main content area is readable */
-    .main p, .main span, .main div {
+    .main p, .main span, .main div, .main h1, .main h2, .main h3, .main h4, .main h5, .main h6 {
         color: var(--text-color-dark) !important;
     }
     
+    /* FIXED: Override white text that appears on white backgrounds */
+    .stMarkdown p, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, 
+    .stMarkdown h4, .stMarkdown h5, .stMarkdown h6, .stMarkdown span {
+        color: #212529 !important;
+    }
+    
     /* FIXED: Dataframe text visibility */
-    .stDataFrame {
+    .stDataFrame, .stDataFrame * {
         color: var(--text-color-dark) !important;
+    }
+    
+    /* FIXED: Metric labels and values */
+    div[data-testid="stMetric"] label,
+    div[data-testid="stMetric"] div {
+        color: #212529 !important;
+    }
+    
+    /* FIXED: Success/Info/Warning messages */
+    .stSuccess, .stInfo, .stWarning {
+        color: #212529 !important;
+    }
+    
+    /* FIXED: Form labels */
+    label[data-testid="stWidgetLabel"] {
+        color: #212529 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -522,7 +578,7 @@ def display_results(site_name):
         st.download_button(
             label=f"Download Results as Excel",
             data=excel_data,
-            file_name=f"{site_name.replace('.', '')}_data_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            file_name= f"{site_name.replace('.', '')}_data_{datetime.now().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
@@ -563,7 +619,6 @@ def run_scraper(site_name, url, start_page, end_page, requires_ai=True):
     metric_cols = st.columns(3)
     pages_metric, lots_metric, recovery_metric = metric_cols[0].empty(), metric_cols[1].empty(), metric_cols[2].empty()
     dataframe_placeholder = st.empty()
-
 
     pages_metric.metric("Pages Scraped", 0)
     lots_metric.metric("Lots Scraped", 0)
@@ -663,7 +718,22 @@ if not st.session_state.authenticated:
 else:
     # === SIDEBAR RECOVERY SOLUTIONS ===
     
-    # Emergency Sidebar Toggle Button (Only show when sidebar might be hidden)
+    # Emergency Sidebar Toggle Button with fixed styling
+    st.markdown("""
+    <style>
+    div[data-testid="column"]:first-child button {
+        background: #1E1E1E !important;
+        color: white !important;
+        border: 1px solid #333333 !important;
+    }
+    div[data-testid="column"]:first-child button:hover {
+        background: #333333 !important;
+        border-color: #4A4A4A !important;
+        color: white !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
     col1, col2, col3 = st.columns([1, 8, 1])
     with col1:
         if st.button("☰", help="Toggle Sidebar", key="sidebar_toggle"):
@@ -716,7 +786,7 @@ else:
         if st.button("🦙 BidLlama Scraper", key="bidllama_btn", use_container_width=True): st.session_state.current_view = 'bidllama'; st.rerun()
 
         st.markdown('<div class="section-header">📊 DIRECT PRICE SCRAPERS</div>', unsafe_allow_html=True)
-        if st.button("🏛️ Nellis Scraper", key="nellis_btn", use_container_width=True): st.session_state.current_view = 'nellis'; st.rerun()
+        if st.button("🛍️ Nellis Scraper", key="nellis_btn", use_container_width=True): st.session_state.current_view = 'nellis'; st.rerun()
         if st.button("🎪 BidFTA Scraper", key="bidfta_btn", use_container_width=True): st.session_state.current_view = 'bidfta'; st.rerun()
         if st.button("🏢 MAC.bid Scraper", key="macbid_btn", use_container_width=True): st.session_state.current_view = 'macbid'; st.rerun()
         if st.button("📈 A-Stock Scraper", key="astock_btn", use_container_width=True): st.session_state.current_view = 'astock'; st.rerun()
