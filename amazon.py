@@ -174,6 +174,57 @@ def add_custom_css():
         --header-font: 'Helvetica Neue', Helvetica, Arial, sans-serif;
         --body-font: 'Helvetica Neue', Helvetica, Arial, sans-serif;
     }
+                
+
+    /* FIX: Expander styling - prevent white background on hover */
+    div[data-testid="stExpander"] {
+        background-color: #1e1e1e !important;
+        border: 1px solid #333333 !important;
+        border-radius: 8px !important;
+    }
+    
+    div[data-testid="stExpander"]:hover {
+        background-color: #2a2a2a !important;
+        border-color: #4a4a4a !important;
+    }
+    
+    /* FIX: Expander header */
+    div[data-testid="stExpander"] summary {
+        background-color: #1e1e1e !important;
+        color: white !important;
+        padding: 12px 16px !important;
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+    }
+    
+    div[data-testid="stExpander"] summary:hover {
+        background-color: #2a2a2a !important;
+        color: white !important;
+    }
+    
+    /* FIX: Expander content area */
+    div[data-testid="stExpander"] > div[role="region"] {
+        background-color: #1e1e1e !important;
+        border-top: 1px solid #333333 !important;
+        padding: 0 !important;
+    }
+    
+    /* FIX: Progress bar styling */
+    div[data-testid="stProgress"] > div {
+        background-color: #e0e0e0 !important;
+        border-radius: 10px !important;
+        height: 8px !important;
+    }
+    
+    div[data-testid="stProgress"] > div > div {
+        background-color: #FF9900 !important;
+        border-radius: 10px !important;
+    }
+    
+    /* FIX: Status text visibility */
+    .stMarkdown p {
+        color: #232F3E !important;
+    }
 
     .password-container {
         display: flex;
@@ -1457,15 +1508,18 @@ def display_product_grid(df, search_term=None, min_price=None, max_price=None, s
     components.html(html_content, height=800, scrolling=True)
 
 def render_amazon_grid_tab():
-    # Always load stored Amazon images first
-    if st.session_state.processed_data is None:
-        st.session_state.processed_data = load_stored_images_from_supabase("amazon")
-        if st.session_state.processed_data.empty:
-            st.warning("No Amazon data has been processed yet. Please upload and process a CSV file with ASINs in the Upload tab.")
-            return
+    # ALWAYS reload from Supabase when visiting this tab
+    stored_data = load_stored_images_from_supabase("amazon")
+    
+    if stored_data.empty:
+        st.warning("No Amazon data has been processed yet. Please upload and process a CSV file with ASINs in the Upload tab.")
+        return
+    
+    # Update session state with stored data
+    st.session_state.processed_data = stored_data
     
     csv_type = detect_csv_type(st.session_state.processed_data)
-    if csv_type not in ['amazon', 'unknown']:  # Allow 'unknown' for stored data
+    if csv_type not in ['amazon', 'unknown']:
         st.warning("This tab is for Amazon products only. Please use the Excel Grid Images tab for other formats.")
         return
     
@@ -1548,6 +1602,8 @@ def render_amazon_grid_tab():
             st.success("Amazon data exported successfully!")
     except Exception as e:
         st.error(f"Error exporting data: {str(e)}")
+
+        
 
 def render_excel_grid_tab():
     if st.session_state.processed_data is None:
@@ -1820,23 +1876,7 @@ def render_upload_tab():
                 df = df.dropna(how='all')
                 df = df.reset_index(drop=True)
             
-            with st.expander("Preview Raw Data"):
-                preview_df = df.copy()
-                for col in preview_df.columns:
-                    if preview_df[col].dtype == 'object':
-                        preview_df[col] = preview_df[col].astype(str).str.strip()
-                
-                st.dataframe(preview_df)
-                
-                st.markdown("### Raw JSON Data (First 5 Records)")
-                st.markdown("""
-                <div class="raw-data-container">
-                <pre>
-                {}
-                </pre>
-                </div>
-                """.format(df.head(5).to_json(orient='records', indent=2)), unsafe_allow_html=True)
-            
+
             csv_type = detect_csv_type(df)
             total_rows = len(df)
             
