@@ -83,7 +83,7 @@ except Exception as e:
     
     def get_logo_base64():
         """Returns a base64 encoded string for a placeholder logo."""
-        return "iVBORw0KGgoAAAANSUhEUgAAAQoAAAApCAYAAAD77MRbAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAHPSURBVHhe7dJBDQAgDAAxAbTj/ycqaKEtKEvcdDkHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADcsPTZfH/eAwbBGAwAYDAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgCAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAgMEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGBbfgAByAB2q0Bv/AAAAABJRU5ErkJggg=="
+        return "iVBORw0KGgoAAAANSUhEUgAAAQoAAAApCAYAAAD77MRbAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAHPSURBVHhe7dJBDQAgDAAxAbTj/ycqaKEtKEvcdDkHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADcsPTZfH/eAwbBGAwAYDAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgCAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAACAwQAAAAwGAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAAAYDAAAMBgAAgMEAgMEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGBbfgAByAB2q0Bv/AAAAABJRU5ErkJggg=="
 
     def render_upload_tab():
         st.info("This is the placeholder for the CSV upload functionality.")
@@ -151,6 +151,151 @@ st.markdown("""
         --info-border: #A6D7FF;
         --warning-bg: #FFFBEA;
         --warning-border: #FFE58A;
+        --success-bg: #D4EDDA;
+        --success-border: #BADBCC;
+        --success-text: #155724;
+        --error-bg: #F8D7DA;
+        --error-border: #F5C2C7;
+        --error-text: #721C24;
+    }
+
+    /* SPECIFIC TEXT COLORS - BLACK FOR LIGHT BACKGROUNDS */
+    .main, 
+    .main *:not([data-testid="stExpander"] *):not(.log-container *):not(section[data-testid="stFileUploadDropzone"] *):not(section[data-testid="stSidebar"] *):not(button *),
+    .main p, .main span, 
+    .main div:not([data-testid="stFileUploadDropzone"] *):not([data-testid="stExpander"] *):not(.log-container *),
+    .main h1, .main h2, .main h3, .main h4, .main h5, .main h6,
+    .main label, .main small,
+    .upload-container, .upload-container *,
+    .filters-panel, .filters-panel *,
+    .content-card, .content-card *,
+    .main-header-card, .main-header-card *,
+    .feature-card, .feature-card *,
+    div[data-testid="stMetric"] *,
+    label[data-testid="stWidgetLabel"]:not(section[data-testid="stFileUploadDropzone"] *),
+    /* ONLY FILE NAME - SPECIFIC TARGET */
+    div[data-testid="stFileUploader"] > div > div:not(section[data-testid="stFileUploadDropzone"]),
+    div[data-testid="stFileUploader"] > div > div:not(section[data-testid="stFileUploadDropzone"]) * {
+        color: #212529 !important;
+    }
+            
+    /* FILE NAME ONLY - HARDCODED BLACK */
+    .stFileUploader span[data-testid="stFileUploaderFileName"],
+    .stFileUploader .uploadedFileName,
+    .stFileUploader > div > div > div > span {
+        color: #212529 !important;
+    }
+                
+    /* FILE NAME - EXACT TARGET */
+    .stFileUploader small,
+    .stFileUploader small * {
+        color: #212529 !important;
+    }
+            
+            /* FILE NAME - SPECIFIC TARGET OUTSIDE DROPZONE */
+    .stFileUploader > div > div:nth-child(2) small,
+    .stFileUploader > div > div:nth-child(2) small * {
+        color: #212529 !important;
+    }
+            
+            /* FILE NAME - EXACT CLASS TARGET */
+    .stFileUploaderFileName,
+    div[data-testid="stFileUploaderFileName"] {
+        color: #212529 !important;
+    }
+
+                /* STATUS MESSAGES - BLACK TEXT */
+    div[data-testid="stText"],
+    .processing-indicator,
+    .processing-indicator *,
+    .stText,
+    .st-emotion-cache-y4bq5x,
+    .st-emotion-cache-1o77jex {
+        color: #212529 !important;
+    }
+                
+    /* SPINNER - BLACK TEXT BUT KEEP SPINNER ICON VISIBLE */
+    .stSpinner p,
+    .stSpinner div:not([data-testid="stSpinner"]) {
+        color: #212529 !important;
+    }
+            
+
+    /* FILE UPLOADER FIX - WHITE TEXT AND ICON ON DARK BACKGROUND */
+    section[data-testid="stFileUploadDropzone"],
+    section[data-testid="stFileUploadDropzone"] *,
+    section[data-testid="stFileUploadDropzone"] span,
+    section[data-testid="stFileUploadDropzone"] p,
+    section[data-testid="stFileUploadDropzone"] small {
+        color: white !important;
+    }
+
+    /* FILE NAME - BLACK TEXT BELOW DROPZONE */
+    .stFileUploader > div > div:nth-child(2) small,
+    .stFileUploader > div > div:nth-child(2) small * {
+        color: #212529 !important;
+    }
+
+    section[data-testid="stFileUploadDropzone"] {
+        background-color: #2b2b2b !important;
+        border: 2px dashed #666 !important;
+    }
+
+    
+
+    /* EXPANDER - DARK BACKGROUND WITH WHITE TEXT */
+    div[data-testid="stExpander"],
+    div[data-testid="stExpander"] *:not([role="region"] *) {
+        background-color: #1E1E1E !important;
+        color: white !important;
+    }
+
+    div[data-testid="stExpander"]:hover {
+        background-color: #2A2A2A !important;
+    }
+
+    /* SIDEBAR - WHITE TEXT */
+    section[data-testid="stSidebar"],
+    section[data-testid="stSidebar"] * {
+        color: white !important;
+    }
+
+    /* LOG CONTAINERS - COLORED TEXT */
+    .log-container * {
+        background-color: #1e1e1e !important;
+    }
+    .log-info { color: #6a9955 !important; }
+    .log-warning { color: #dcdcaa !important; }
+    .log-error { color: #f14c4c !important; }
+    .log-success { color: #4ec9b0 !important; }
+
+    /* BUTTONS - WHITE TEXT */
+    button, button * {
+        color: white !important;
+    }
+
+    /* ALERTS - PROPER COLORS */
+    div[data-testid="stAlert"] * {
+        color: #333 !important;
+    }
+    div[data-testid="stAlert"][kind="success"] * {
+        color: #155724 !important;
+    }
+    div[data-testid="stAlert"][kind="error"] * {
+        color: #721C24 !important;
+    }
+
+    /* HEADERS - WHITE TEXT */
+    .main-header, .main-header * {
+        color: white !important;
+    }
+
+    /* PROGRESS BAR */
+    div[data-testid="stProgress"] > div {
+        background-color: #e0e0e0 !important;
+    }
+    div[data-testid="stProgress"] > div > div {
+        background-color: #FF9900 !important;
     }
 
     body, .stApp {
@@ -160,25 +305,21 @@ st.markdown("""
     
     .main .block-container { padding: 1.5rem 3rem; }
     
-    /* FIXED: Only hide specific menu items, not the sidebar toggle button */
     #MainMenu { visibility: hidden; }
     footer { visibility: hidden; }
     .stDeployButton { visibility: hidden; }
     
-    /* FIXED: Ensure sidebar toggle button is visible - Multiple selectors for different Streamlit versions */
     button[kind="header"] { visibility: visible !important; }
     button[data-testid="collapsedControl"] { visibility: visible !important; }
     .css-1dp5vir { visibility: visible !important; }
     .css-16huue1 { visibility: visible !important; }
     header[data-testid="stHeader"] button { visibility: visible !important; }
     
-    /* Force sidebar toggle to appear */
     .stApp > header, .stApp header[data-testid="stHeader"] {
         visibility: visible !important;
         display: block !important;
     }
     
-    /* Emergency floating sidebar toggle */
     .floating-toggle {
         position: fixed !important;
         top: 10px !important;
@@ -194,7 +335,6 @@ st.markdown("""
         font-size: 16px !important;
     }
     
-    /* Emergency sidebar visibility */
     section[data-testid="stSidebar"] {
         position: relative !important;
         display: block !important;
@@ -211,7 +351,6 @@ st.markdown("""
         background: #1E1E1E; border-radius: 12px;
         border: 1px solid var(--sidebar-border);
     }
-    /* FIXED: Navigation section headers - make them visible against dark sidebar */
     .section-header {
         font-size: 0.75rem; font-weight: 600; color: #999999 !important;
         text-transform: uppercase; letter-spacing: 0.1em; margin: 1.5rem 0 0.5rem 0;
@@ -242,7 +381,6 @@ st.markdown("""
         line-height: 1.6;
     }
 
-    /* FIXED: Input styling with proper placeholder colors */
     .stTextInput > div > div > input,
     .stNumberInput > div > div > input {
         border-radius: 10px !important; 
@@ -255,13 +393,11 @@ st.markdown("""
         transition: all 0.2s ease !important;
     }
     
-    /* FIXED: White placeholder text for password input */
     .stTextInput > div > div > input::placeholder {
         color: #888888 !important;
         opacity: 1 !important;
     }
     
-    /* FIXED: Focus states for inputs */
     .stTextInput > div > div > input:focus,
     .stNumberInput > div > div > input:focus {
         border-color: var(--primary-action-color) !important;
@@ -298,7 +434,6 @@ st.markdown("""
         color: white !important;
     }
     
-    /* FIXED: Download button - prevent white background on hover */
     .stDownloadButton > button {
         background: var(--bg-color-dark-interactive) !important;
         color: white !important;
@@ -316,13 +451,30 @@ st.markdown("""
         box-shadow: 0 4px 15px rgba(0,0,0,0.2);
     }
     
-    /* FIXED: All button text should be white on dark buttons */
     button[kind="primary"],
     button[kind="secondary"] {
         color: white !important;
     }
+    button[kind="primary"]:hover,
+    button[kind="secondary"]:hover {
+        color: white !important;
+        background-color: #333333 !important;
+    }
+
+    button {
+        background-color: var(--bg-color-dark-interactive) !important;
+        color: var(--text-color-light) !important;
+        border: 1px solid var(--sidebar-border) !important;
+        border-radius: 10px !important;
+        transition: all 0.2s ease !important;
+    }
+    button:hover {
+        background-color: #333333 !important;
+        color: #FFFFFF !important;
+        border-color: #4A4A4A !important;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2) !important;
+    }
     
-    /* FIXED: Label colors for better visibility */
     .stTextInput > label, .stNumberInput > label {
         color: var(--text-color-dark) !important; 
         font-weight: 600 !important;
@@ -346,7 +498,6 @@ st.markdown("""
         border-color: var(--bg-color-dark-interactive) !important;
     }
 
-    /* FIXED: Alert styling with better text contrast */
     div[data-testid="stAlert"] {
         border-radius: 12px; border-width: 1px; border-style: solid;
         box-shadow: 0 2px 4px rgba(0,0,0,0.04);
@@ -360,6 +511,36 @@ st.markdown("""
     }
     div[data-testid="stAlert"][kind="warning"] {
         background-color: var(--warning-bg); border-color: var(--warning-border);
+    }
+    div[data-testid="stAlert"][kind="success"] {
+        background-color: var(--success-bg) !important;
+        border-color: var(--success-border) !important;
+    }
+    div[data-testid="stAlert"][kind="success"] p {
+        color: var(--success-text) !important;
+    }
+    div[data-testid="stAlert"][kind="error"] {
+        background-color: var(--error-bg) !important;
+        border-color: var(--error-border) !important;
+    }
+    div[data-testid="stAlert"][kind="error"] p {
+        color: var(--error-text) !important;
+    }
+    
+    .stFileUploader > div > button {
+        background-color: var(--bg-color-dark-interactive) !important;
+        color: var(--text-color-light) !important;
+    }
+    .stFileUploader > div > button:hover {
+        background-color: #333333 !important;
+        color: #FFFFFF !important;
+    }
+    .stNumberInput input {
+        background-color: #FFFFFF !important;
+        color: #212529 !important;
+    }
+    .stAlert {
+        color: #212529 !important;
     }
     
     .main-header-card {
@@ -398,38 +579,32 @@ st.markdown("""
     .border-purple { border-top: 4px solid #9013FE; }
     .border-orange { border-top: 4px solid #F5A623; }
     
-    /* FIXED: Ensure all text in main content area is readable */
-    .main p, .main span, .main div, .main h1, .main h2, .main h3, .main h4, .main h5, .main h6 {
-        color: var(--text-color-dark) !important;
-    }
-    
-    /* FIXED: Override white text that appears on white backgrounds */
-    .stMarkdown p, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, 
-    .stMarkdown h4, .stMarkdown h5, .stMarkdown h6, .stMarkdown span {
-        color: #212529 !important;
-    }
-    
-    /* FIXED: Dataframe text visibility */
-    .stDataFrame, .stDataFrame * {
-        color: var(--text-color-dark) !important;
-    }
-    
-    /* FIXED: Metric labels and values */
     div[data-testid="stMetric"] label,
     div[data-testid="stMetric"] div {
         color: #212529 !important;
     }
     
-    /* FIXED: Success/Info/Warning messages */
-    .stSuccess, .stInfo, .stWarning {
-        color: #212529 !important;
-    }
-    
-    /* FIXED: Form labels */
     label[data-testid="stWidgetLabel"] {
         color: #212529 !important;
     }
 </style>
+<script>
+setInterval(function() {
+    const dropzone = document.querySelector('section[data-testid="stFileUploadDropzone"]');
+    if (dropzone) {
+        dropzone.querySelectorAll('*').forEach(el => {
+            if (el.tagName !== 'INPUT') {
+                el.style.setProperty('color', '#FFFFFF', 'important');
+            }
+        });
+        const svgs = dropzone.querySelectorAll('svg, svg *');
+        svgs.forEach(svg => {
+            svg.style.setProperty('fill', '#FFFFFF', 'important');
+        });
+    }
+}, 100);
+</script>
+
 """, unsafe_allow_html=True)
 
 # Emergency CSS fix and floating toggle button
@@ -572,7 +747,7 @@ def stop_scraping():
 def display_results(site_name):
     if not st.session_state.results_df.empty:
         st.markdown("---")
-        st.subheader(f"📊 {site_name} Scraping Results")
+        st.markdown(f'<h3 style="color: var(--text-color-dark);">📊 {site_name} Scraping Results</h3>', unsafe_allow_html=True)
         st.dataframe(st.session_state.results_df, use_container_width=True)
         excel_data = to_excel(st.session_state.results_df, site_name)
         st.download_button(
@@ -740,40 +915,6 @@ else:
             st.session_state.sidebar_visible = not st.session_state.sidebar_visible
             st.rerun()
 
-    # Show navigation help for non-home views
-    if st.session_state.current_view != 'home':
-        with st.expander("🔧 Navigation Help", expanded=False):
-            st.markdown("""
-            **If sidebar disappeared:**
-            - Press `[` key (left bracket) to toggle sidebar
-            - Refresh page with `F5` or `Ctrl+R`
-            - Click the ☰ button (if visible)
-            - Use the navigation buttons below as backup
-            """)
-            
-            # Backup navigation buttons
-            st.markdown("**Quick Navigation:**")
-            nav_col1, nav_col2, nav_col3, nav_col4 = st.columns(4)
-            
-            with nav_col1:
-                if st.button("🏠 Home", key="backup_home"):
-                    st.session_state.current_view = 'home'
-                    st.rerun()
-            
-            with nav_col2:
-                if st.button("🤖 AI Scrapers", key="backup_ai"):
-                    st.session_state.current_view = 'hibid'
-                    st.rerun()
-            
-            with nav_col3:
-                if st.button("📊 Direct Scrapers", key="backup_direct"):
-                    st.session_state.current_view = 'nellis'
-                    st.rerun()
-                    
-            with nav_col4:
-                if st.button("📦 Amazon Tool", key="backup_amazon"):
-                    st.session_state.current_view = 'amazon'
-                    st.rerun()
 
     with st.sidebar:
         st.markdown('<div class="sidebar-title">NextGen Business Intelligence</div>', unsafe_allow_html=True)
