@@ -753,10 +753,10 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count):
     }
 
     user_agents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
     ]
     
     headers = {
@@ -767,14 +767,132 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count):
         "Connection": "keep-alive",
         "Upgrade-Insecure-Requests": "1",
         "Cache-Control": "max-age=0",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
         "Referer": "https://www.google.com/"
     }
     
     cookies = {
         "session-id": str(random.randint(100000000, 999999999)),
         "session-id-time": str(int(time.time())),
-        "i18n-prefs": "USD"
+        "i18n-prefs": "USD",
+        "ubid-main": str(random.randint(100000000, 999999999))
     }
+
+    def extract_image_from_soup(soup, asin, attempt):
+        """Enhanced image extraction with multiple fallback methods"""
+        
+        # Method 1: Standard landingImage with data-a-dynamic-image
+        img_tag = soup.find("img", {"id": "landingImage"})
+        if img_tag and img_tag.get("data-a-dynamic-image"):
+            try:
+                images_dict = json.loads(img_tag["data-a-dynamic-image"])
+                largest_image = max(images_dict.keys(), 
+                                  key=lambda x: images_dict[x][0] * images_dict[x][1])
+                
+                if '._' in largest_image:
+                    base_url = largest_image.split('._')[0]
+                    largest_image = base_url + "._AC_SL1500_.jpg"
+                
+                log_queue.put(('success', f'ASIN {asin}: Method 1 - Found dynamic image on attempt {attempt}'))
+                return largest_image
+            except Exception as e:
+                log_queue.put(('warning', f'ASIN {asin}: Method 1 failed: {str(e)}'))
+        
+        # Method 2: landingImage with src attribute
+        if img_tag and img_tag.get("src"):
+            src_url = img_tag["src"]
+            if '._' in src_url:
+                base_url = src_url.split('._')[0]
+                src_url = base_url + "._AC_SL1500_.jpg"
+            log_queue.put(('success', f'ASIN {asin}: Method 2 - Found src image on attempt {attempt}'))
+            return src_url
+        
+        # Method 3: Alternative image containers
+        alternative_selectors = [
+            {"id": "imgBlkFront"},
+            {"id": "ebooksImgBlkFront"},
+            {"class": "a-dynamic-image"},
+            {"data-old-hires": True},
+            {"data-a-dynamic-image": True}
+        ]
+        
+        for selector in alternative_selectors:
+            img_tags = soup.find_all("img", selector)
+            for img in img_tags:
+                # Check data-a-dynamic-image
+                if img.get("data-a-dynamic-image"):
+                    try:
+                        images_dict = json.loads(img["data-a-dynamic-image"])
+                        largest_image = max(images_dict.keys(), 
+                                          key=lambda x: images_dict[x][0] * images_dict[x][1])
+                        
+                        if '._' in largest_image:
+                            base_url = largest_image.split('._')[0]
+                            largest_image = base_url + "._AC_SL1500_.jpg"
+                        
+                        log_queue.put(('success', f'ASIN {asin}: Method 3a - Found alternative dynamic image on attempt {attempt}'))
+                        return largest_image
+                    except:
+                        continue
+                
+                # Check src attribute
+                if img.get("src") and "images-amazon" in img.get("src", ""):
+                    src_url = img["src"]
+                    if '._' in src_url:
+                        base_url = src_url.split('._')[0]
+                        src_url = base_url + "._AC_SL1500_.jpg"
+                    log_queue.put(('success', f'ASIN {asin}: Method 3b - Found alternative src image on attempt {attempt}'))
+                    return src_url
+                
+                # Check data-old-hires
+                if img.get("data-old-hires"):
+                    src_url = img["data-old-hires"]
+                    if '._' in src_url:
+                        base_url = src_url.split('._')[0]
+                        src_url = base_url + "._AC_SL1500_.jpg"
+                    log_queue.put(('success', f'ASIN {asin}: Method 3c - Found data-old-hires image on attempt {attempt}'))
+                    return src_url
+        
+        # Method 4: Search for any Amazon image URLs in the page
+        all_images = soup.find_all("img")
+        for img in all_images:
+            src = img.get("src", "")
+            if ("images-amazon" in src or "ssl-images-amazon" in src) and any(dim in src for dim in ["SL1500", "SL1000", "AC_"]):
+                if '._' in src:
+                    base_url = src.split('._')[0]
+                    src = base_url + "._AC_SL1500_.jpg"
+                log_queue.put(('success', f'ASIN {asin}: Method 4 - Found Amazon image URL on attempt {attempt}'))
+                return src
+        
+        # Method 5: Look for script tags containing image data
+        scripts = soup.find_all("script")
+        for script in scripts:
+            if script.string and "ImageBlockATF" in script.string:
+                try:
+                    # Extract image URLs from JavaScript
+                    import re
+                    image_urls = re.findall(r'https://[^"]*images-amazon[^"]*\.jpg', script.string)
+                    if image_urls:
+                        # Get the largest resolution
+                        for url in image_urls:
+                            if "SL1500" in url or "SL1000" in url:
+                                log_queue.put(('success', f'ASIN {asin}: Method 5 - Found script image URL on attempt {attempt}'))
+                                return url
+                        # Fallback to first found
+                        if image_urls:
+                            url = image_urls[0]
+                            if '._' in url:
+                                base_url = url.split('._')[0]
+                                url = base_url + "._AC_SL1500_.jpg"
+                            log_queue.put(('success', f'ASIN {asin}: Method 5 fallback - Found script image URL on attempt {attempt}'))
+                            return url
+                except:
+                    continue
+        
+        log_queue.put(('warning', f'ASIN {asin}: All extraction methods failed on attempt {attempt}'))
+        return None
 
     for attempt in range(3):
         url = f"https://www.amazon.com/dp/{asin}"
@@ -782,7 +900,7 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count):
         log_queue.put(('info', f'ASIN {asin}: Attempt {attempt+1}/3 started'))
         
         if attempt > 0:
-            sleep_time = 2 + random.uniform(1, 3)
+            sleep_time = 2 + random.uniform(1, 4)  # Increased sleep time
             log_queue.put(('info', f'ASIN {asin}: Waiting {sleep_time:.2f} seconds before retry'))
             time.sleep(sleep_time)
         
@@ -792,7 +910,7 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count):
                 headers=headers,
                 cookies=cookies,
                 impersonate="chrome",
-                timeout=15
+                timeout=20  # Increased timeout
             )
             
             if resp.status_code == 200:
@@ -800,49 +918,41 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count):
                 
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 
-                img_tag = soup.find("img", {"id": "landingImage"})
-                if img_tag and img_tag.get("data-a-dynamic-image"):
-                    try:
-                        images_dict = json.loads(img_tag["data-a-dynamic-image"])
-                        largest_image = max(images_dict.keys(), 
-                                          key=lambda x: images_dict[x][0] * images_dict[x][1])
-                        
-                        if '._' in largest_image:
-                            base_url = largest_image.split('._')[0]
-                            largest_image = base_url + "._AC_SL1500_.jpg"
-                        
-                        product_details['image_url'] = largest_image
-                        product_details['success'] = True
-                        log_queue.put(('success', f'ASIN {asin}: Found image on attempt {attempt+1}'))
-                        
-                        # Store to Supabase
-                        store_image_to_supabase(asin, largest_image, "amazon")
-                        
-                        return product_details
-                    except Exception:
-                        pass
-
-                if img_tag and img_tag.get("src"):
-                    src_url = img_tag["src"]
-                    if '._' in src_url:
-                        base_url = src_url.split('._')[0]
-                        src_url = base_url + "._AC_SL1500_.jpg"
-                    product_details['image_url'] = src_url
-                    product_details['success'] = True
-                    log_queue.put(('success', f'ASIN {asin}: Found image on attempt {attempt+1}'))
-                    
-                    # Store to Supabase
-                    store_image_to_supabase(asin, src_url, "amazon")
-                    
+                # Check if we got a valid product page
+                if "does not exist" in resp.text.lower() or "page not found" in resp.text.lower():
+                    log_queue.put(('error', f'ASIN {asin}: Product not found on attempt {attempt+1}'))
+                    product_details['error'] = 'Product not found'
                     return product_details
                 
-                log_queue.put(('warning', f'ASIN {asin}: No image found on attempt {attempt+1}. Will retry.'))
+                # Enhanced image extraction
+                image_url = extract_image_from_soup(soup, asin, attempt+1)
+                
+                if image_url:
+                    product_details['image_url'] = image_url
+                    product_details['success'] = True
+                    
+                    # Store to Supabase
+                    store_image_to_supabase(asin, image_url, "amazon")
+                    
+                    return product_details
+                else:
+                    log_queue.put(('warning', f'ASIN {asin}: No image found on attempt {attempt+1}'))
             
+            elif resp.status_code == 503:
+                log_queue.put(('warning', f'ASIN {asin}: Service unavailable (503) on attempt {attempt+1} - may be rate limited'))
+                if attempt < 2:  # If not last attempt
+                    time.sleep(5 + random.uniform(2, 5))  # Longer wait for 503
+            elif resp.status_code == 404:
+                log_queue.put(('error', f'ASIN {asin}: Product not found (404) on attempt {attempt+1}'))
+                product_details['error'] = 'Product not found (404)'
+                return product_details
             else:
                 log_queue.put(('error', f'ASIN {asin}: Bad status code {resp.status_code} on attempt {attempt+1}'))
         
         except Exception as e:
             log_queue.put(('error', f'ASIN {asin}: Error on attempt {attempt+1}: {str(e)}'))
+            if "timeout" in str(e).lower():
+                time.sleep(3)  # Wait a bit for timeout errors
     
     if not product_details['success']:
         log_queue.put(('error', f'ASIN {asin}: Failed after 3 attempts'))
