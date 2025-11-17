@@ -40,8 +40,8 @@ if 'total_processing_count' not in st.session_state:
     st.session_state.total_processing_count = 0
 
 # Supabase configuration
-SUPABASE_URL = "https://yalnxbaaamacmzzzrixt.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlhbG54YmFhYW1hY216enpyaXh0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgxNTUzMzQsImV4cCI6MjA3MzczMTMzNH0.3xUsilmwcZlUrHQfrJ31bDEIsfJiCYcbaHktjzVJRRQ"
+SUPABASE_URL = "https://sjxkhpuaucenweapjlre.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNqeGtocHVhdWNlbndlYXBqbHJlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMyNjIyMTYsImV4cCI6MjA3ODgzODIxNn0.2R7gf9pi0rdCq9CpK-IEmFOAvU69BrOULKYmID47FwQ"
 
 @st.cache_resource
 def get_supabase_client():
