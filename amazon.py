@@ -1,7 +1,7 @@
 import base64
 import streamlit as st
 import pandas as pd
-from curl_cffi import requests
+import requests
 from bs4 import BeautifulSoup
 import time
 import re
@@ -9,7 +9,17 @@ import json
 import random
 import queue
 import hashlib
+import os
+from dotenv import load_dotenv
 from supabase import create_client, Client
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Environment variables for sensitive data
+ZYTE_API_KEY = os.getenv('ZYTE_API_KEY')
+SUPABASE_URL = os.getenv('SUPABASE_URL', "https://sjxkhpuaucenweapjlre.supabase.co")
+SUPABASE_KEY = os.getenv('SUPABASE_KEY', "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNqeGtocHVhdWNlbndlYXBqbHJlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMyNjIyMTYsImV4cCI6MjA3ODgzODIxNn0.2R7gf9pi0rdCq9CpK-IEmFOAvU69BrOULKYmID47FwQ")
 
 if 'processed_data' in st.session_state:
     pass
@@ -38,10 +48,6 @@ if 'current_processing_id' not in st.session_state:
     st.session_state.current_processing_id = 0
 if 'total_processing_count' not in st.session_state:
     st.session_state.total_processing_count = 0
-
-# Supabase configuration
-SUPABASE_URL = "https://sjxkhpuaucenweapjlre.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNqeGtocHVhdWNlbndlYXBqbHJlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMyNjIyMTYsImV4cCI6MjA3ODgzODIxNn0.2R7gf9pi0rdCq9CpK-IEmFOAvU69BrOULKYmID47FwQ"
 
 @st.cache_resource
 def get_supabase_client():
@@ -752,30 +758,6 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count):
         'error': None
     }
 
-    user_agents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0"
-    ]
-    
-    headers = {
-        "User-Agent": random.choice(user_agents),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Cache-Control": "max-age=0",
-        "Referer": "https://www.google.com/"
-    }
-    
-    cookies = {
-        "session-id": str(random.randint(100000000, 999999999)),
-        "session-id-time": str(int(time.time())),
-        "i18n-prefs": "USD"
-    }
-
     for attempt in range(3):
         url = f"https://www.amazon.com/dp/{asin}"
         
@@ -787,32 +769,49 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count):
             time.sleep(sleep_time)
         
         try:
-            resp = requests.get(
-                url,
-                headers=headers,
-                cookies=cookies,
-                impersonate="chrome",
-                timeout=15
+            # ZYTE API REQUEST - Replace curl-cffi with Zyte API
+            if not ZYTE_API_KEY:
+                log_queue.put(('error', f'ASIN {asin}: Zyte API key not found in environment variables'))
+                product_details['error'] = 'Zyte API key not configured'
+                return product_details
+            
+            log_queue.put(('info', f'ASIN {asin}: Making Zyte API request'))
+            
+            api_response = requests.post(
+                "https://api.zyte.com/v1/extract",
+                auth=(ZYTE_API_KEY, ""),
+                json={
+                    "url": url,
+                    "httpResponseBody": True,
+                    "followRedirect": True,
+                },
+                timeout=60
             )
             
             # ADD STATUS CODE LOGGING HERE
-            log_queue.put(('info', f'ASIN {asin}: Status Code: {resp.status_code} on attempt {attempt+1}'))
+            log_queue.put(('info', f'ASIN {asin}: Zyte API Status Code: {api_response.status_code} on attempt {attempt+1}'))
             
-            # ADD RESPONSE SIZE LOGGING
-            log_queue.put(('info', f'ASIN {asin}: Response size: {len(resp.text)} bytes'))
-            
-            # ADD PAGE TITLE CHECK FOR DEBUG
-            if resp.status_code == 200:
-                soup = BeautifulSoup(resp.text, 'html.parser')
+            if api_response.status_code == 200:
+                response_data = api_response.json()
+                
+                # Decode the response body from base64
+                http_response_body = base64.b64decode(response_data["httpResponseBody"])
+                resp_text = http_response_body.decode('utf-8', errors='ignore')
+                
+                # ADD RESPONSE SIZE LOGGING
+                log_queue.put(('info', f'ASIN {asin}: Response size: {len(resp_text)} bytes'))
+                
+                # ADD PAGE TITLE CHECK FOR DEBUG
+                soup = BeautifulSoup(resp_text, 'html.parser')
                 page_title = soup.title.string if soup.title else "No title found"
                 log_queue.put(('info', f'ASIN {asin}: Page title: "{page_title}"'))
                 
                 # CHECK IF IT'S A CAPTCHA OR ROBOT CHECK PAGE
-                if "robot" in resp.text.lower() or "captcha" in resp.text.lower():
+                if "robot" in resp_text.lower() or "captcha" in resp_text.lower():
                     log_queue.put(('warning', f'ASIN {asin}: Bot detection page detected on attempt {attempt+1}'))
                 
                 # CHECK IF PRODUCT EXISTS
-                if "does not exist" in resp.text.lower() or "page not found" in resp.text.lower():
+                if "does not exist" in resp_text.lower() or "page not found" in resp_text.lower():
                     log_queue.put(('error', f'ASIN {asin}: Product not found on attempt {attempt+1}'))
                 
                 log_queue.put(('success', f'ASIN {asin}: Retrieved page on attempt {attempt+1}'))
@@ -868,85 +867,20 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count):
                 
                 log_queue.put(('warning', f'ASIN {asin}: No image found on attempt {attempt+1}. Will retry.'))
             
+            elif api_response.status_code == 422:
+                error_detail = api_response.json().get('detail', 'Unknown error')
+                log_queue.put(('error', f'ASIN {asin}: Zyte API validation error: {error_detail}'))
+            elif api_response.status_code == 429:
+                log_queue.put(('warning', f'ASIN {asin}: Zyte API rate limit exceeded'))
+            elif api_response.status_code == 503:
+                log_queue.put(('warning', f'ASIN {asin}: Zyte API service unavailable (503)'))
+            elif api_response.status_code == 404:
+                log_queue.put(('error', f'ASIN {asin}: Product not found (404)'))
             else:
-                log_queue.put(('error', f'ASIN {asin}: Bad status code {resp.status_code} on attempt {attempt+1}'))
-                
-                # ADD SPECIFIC STATUS CODE HANDLING
-                if resp.status_code == 503:
-                    log_queue.put(('warning', f'ASIN {asin}: Service unavailable - likely rate limited'))
-                elif resp.status_code == 404:
-                    log_queue.put(('error', f'ASIN {asin}: Product not found (404)'))
-                elif resp.status_code == 403:
-                    log_queue.put(('warning', f'ASIN {asin}: Forbidden - may be blocked'))
+                log_queue.put(('error', f'ASIN {asin}: Zyte API error {api_response.status_code}: {api_response.text}'))
         
         except Exception as e:
             log_queue.put(('error', f'ASIN {asin}: Error on attempt {attempt+1}: {str(e)}'))
-    
-    if not product_details['success']:
-        log_queue.put(('error', f'ASIN {asin}: Failed after 3 attempts'))
-        product_details['error'] = 'Failed to retrieve product data after 3 attempts'
-    
-    return product_details
-
-    for attempt in range(3):
-        url = f"https://www.amazon.com/dp/{asin}"
-        
-        log_queue.put(('info', f'ASIN {asin}: Attempt {attempt+1}/3 started'))
-        
-        if attempt > 0:
-            sleep_time = 2 + random.uniform(1, 4)  # Increased sleep time
-            log_queue.put(('info', f'ASIN {asin}: Waiting {sleep_time:.2f} seconds before retry'))
-            time.sleep(sleep_time)
-        
-        try:
-            resp = requests.get(
-                url,
-                headers=headers,
-                cookies=cookies,
-                impersonate="chrome",
-                timeout=20  # Increased timeout
-            )
-            
-            if resp.status_code == 200:
-                log_queue.put(('success', f'ASIN {asin}: Retrieved page on attempt {attempt+1}'))
-                
-                soup = BeautifulSoup(resp.text, 'html.parser')
-                
-                # Check if we got a valid product page
-                if "does not exist" in resp.text.lower() or "page not found" in resp.text.lower():
-                    log_queue.put(('error', f'ASIN {asin}: Product not found on attempt {attempt+1}'))
-                    product_details['error'] = 'Product not found'
-                    return product_details
-                
-                # Enhanced image extraction
-                image_url = extract_image_from_soup(soup, asin, attempt+1)
-                
-                if image_url:
-                    product_details['image_url'] = image_url
-                    product_details['success'] = True
-                    
-                    # Store to Supabase
-                    store_image_to_supabase(asin, image_url, "amazon")
-                    
-                    return product_details
-                else:
-                    log_queue.put(('warning', f'ASIN {asin}: No image found on attempt {attempt+1}'))
-            
-            elif resp.status_code == 503:
-                log_queue.put(('warning', f'ASIN {asin}: Service unavailable (503) on attempt {attempt+1} - may be rate limited'))
-                if attempt < 2:  # If not last attempt
-                    time.sleep(5 + random.uniform(2, 5))  # Longer wait for 503
-            elif resp.status_code == 404:
-                log_queue.put(('error', f'ASIN {asin}: Product not found (404) on attempt {attempt+1}'))
-                product_details['error'] = 'Product not found (404)'
-                return product_details
-            else:
-                log_queue.put(('error', f'ASIN {asin}: Bad status code {resp.status_code} on attempt {attempt+1}'))
-        
-        except Exception as e:
-            log_queue.put(('error', f'ASIN {asin}: Error on attempt {attempt+1}: {str(e)}'))
-            if "timeout" in str(e).lower():
-                time.sleep(3)  # Wait a bit for timeout errors
     
     if not product_details['success']:
         log_queue.put(('error', f'ASIN {asin}: Failed after 3 attempts'))
@@ -1707,8 +1641,6 @@ def render_amazon_grid_tab():
     except Exception as e:
         st.error(f"Error exporting data: {str(e)}")
 
-        
-
 def render_excel_grid_tab():
     if st.session_state.processed_data is None:
         st.warning("No data has been processed yet. Please upload and process a CSV file in the Upload tab.")
@@ -2048,6 +1980,21 @@ def render_upload_tab():
 
 def main():
     add_custom_css()
+    
+    # Check if Zyte API key is configured
+    if not ZYTE_API_KEY:
+        st.error("⚠️ Zyte API key not found!")
+        st.markdown("""
+        ### Setup Instructions:
+        1. Create a `.env` file in your project directory
+        2. Add your Zyte API key to the `.env` file:
+           ```
+           ZYTE_API_KEY=your_actual_api_key_here
+           ```
+        3. Restart the app
+        """)
+        st.info("Get your Zyte API key from: https://www.zyte.com/")
+        return
     
     if not st.session_state.authenticated:
         verify_password()
