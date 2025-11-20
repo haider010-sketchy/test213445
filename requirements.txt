@@ -8,5 +8,7 @@ openpyxl
 supabase
 curl-cffi
 setuptools
+python-dotenv
+
 
 
