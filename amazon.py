@@ -69,27 +69,50 @@ def store_image_to_supabase(asin, image_url, source_type="amazon", retail_price=
             add_log(f"Image already exists for ASIN {asin}, skipping", "warning")
             return False
         
-        # Insert new image with retail price
+        # Build data dict - only include retail_price if provided
         data = {
             'asin': asin,
             'image_url': image_url,
             'image_hash': image_hash,
             'source_type': source_type,
-            'retail_price': retail_price,
             'created_at': time.strftime("%Y-%m-%d %H:%M:%S")
         }
+        
+        # Only add retail_price if it's provided (table must have this column)
+        if retail_price is not None:
+            data['retail_price'] = retail_price
         
         result = supabase.table('product_images').insert(data).execute()
         
         if result.data:
-            add_log(f"Stored image for ASIN {asin} to Supabase with price {retail_price}", "success")
+            price_msg = f" with price {retail_price}" if retail_price is not None else ""
+            add_log(f"Stored image for ASIN {asin} to Supabase{price_msg}", "success")
             return True
         else:
             add_log(f"Failed to store image for ASIN {asin}", "error")
             return False
             
     except Exception as e:
-        add_log(f"Supabase error for ASIN {asin}: {str(e)}", "error")
+        # More helpful error message
+        error_msg = str(e)
+        if 'retail_price' in error_msg and 'not find' in error_msg:
+            add_log(f"Supabase table missing 'retail_price' column. Storing without price for ASIN {asin}", "warning")
+            # Try again without retail_price
+            try:
+                data_without_price = {
+                    'asin': asin,
+                    'image_url': image_url,
+                    'image_hash': image_hash,
+                    'source_type': source_type,
+                    'created_at': time.strftime("%Y-%m-%d %H:%M:%S")
+                }
+                result = supabase.table('product_images').insert(data_without_price).execute()
+                if result.data:
+                    add_log(f"Stored image for ASIN {asin} without price", "success")
+                    return True
+            except:
+                pass
+        add_log(f"Supabase error for ASIN {asin}: {error_msg}", "error")
         return False
 
 def delete_all_images_from_supabase():
@@ -119,7 +142,14 @@ def get_stored_images_count():
 def load_stored_images_from_supabase(source_filter="amazon"):
     try:
         supabase = get_supabase_client()
-        result = supabase.table('product_images').select('*').eq('source_type', source_filter).order('retail_price', desc=True, nullslast=True).execute()
+        
+        # Try with retail_price first
+        try:
+            result = supabase.table('product_images').select('*').eq('source_type', source_filter).order('retail_price', desc=True, nullslast=True).execute()
+        except:
+            # If retail_price column doesn't exist, load without sorting
+            add_log("Retail price column not found in database, loading without price sorting", "info")
+            result = supabase.table('product_images').select('*').eq('source_type', source_filter).execute()
         
         if result.data:
             stored_data = []
@@ -127,7 +157,7 @@ def load_stored_images_from_supabase(source_filter="amazon"):
                 stored_data.append({
                     'Asin': item['asin'],
                     'Product_Image_URL': item['image_url'],
-                    'Retail': item.get('retail_price', ''),
+                    'Retail': item.get('retail_price', ''),  # Safely get retail_price
                     'Fetch_Success': True,
                     'Error': None,
                     'Source': item['source_type'],
@@ -135,7 +165,8 @@ def load_stored_images_from_supabase(source_filter="amazon"):
                 })
             
             df = pd.DataFrame(stored_data)
-            add_log(f"Loaded {len(stored_data)} stored {source_filter} images from Supabase (sorted by price)", "success")
+            sort_msg = " (sorted by price)" if 'retail_price' in result.data[0] else ""
+            add_log(f"Loaded {len(stored_data)} stored {source_filter} images from Supabase{sort_msg}", "success")
             return df
         else:
             add_log(f"No stored {source_filter} images found in Supabase", "info")
