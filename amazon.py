@@ -1143,7 +1143,7 @@ def process_amazon_data(df, max_rows=None):
                 if not asin_row.empty:
                     price_value = asin_row.iloc[0][retail_col]
                     if pd.notna(price_value):
-                        retail_price = str(price_value).replace(', '').replace(',', '').replace('#', '')
+                        retail_price = str(price_value).replace(',', '').replace('#', '')
                         try:
                             retail_price = float(retail_price)
                         except:
@@ -1537,7 +1537,7 @@ def display_product_grid(df, search_term=None, min_price=None, max_price=None, s
         # Clean and convert retail prices to numeric
         try:
             # Remove $ signs, commas, and convert to float
-            filtered_df[f'{retail_col}_numeric'] = filtered_df[retail_col].astype(str).str.replace(', '').str.replace(',', '').str.replace('#', '')
+            filtered_df[f'{retail_col}_numeric'] = filtered_df[retail_col].astype(str).str.replace(',', '').str.replace('#', '')
             filtered_df[f'{retail_col}_numeric'] = pd.to_numeric(filtered_df[f'{retail_col}_numeric'], errors='coerce')
             
             # Sort by retail price (highest to lowest)
@@ -1621,7 +1621,7 @@ def display_product_grid(df, search_term=None, min_price=None, max_price=None, s
         price_display = ""
         if retail_col and pd.notna(product[retail_col]):
             price_value = str(product[retail_col])
-            if not price_value.startswith('):
+            if not price_value.startswith('$'):
                 price_display = f"${price_value}"
             else:
                 price_display = price_value
@@ -1660,7 +1660,7 @@ def display_fullscreen_grid(df, search_term=None, min_price=None, max_price=None
         # Clean and convert retail prices to numeric
         try:
             # Remove $ signs, commas, and convert to float
-            filtered_df[f'{retail_col}_numeric'] = filtered_df[retail_col].astype(str).str.replace(', '').str.replace(',', '').str.replace('#', '')
+            filtered_df[f'{retail_col}_numeric'] = filtered_df[retail_col].astype(str).str.replace(',', '').str.replace('#', '')
             filtered_df[f'{retail_col}_numeric'] = pd.to_numeric(filtered_df[f'{retail_col}_numeric'], errors='coerce')
             
             # Sort by retail price (highest to lowest)
@@ -1831,7 +1831,7 @@ def display_fullscreen_grid(df, search_term=None, min_price=None, max_price=None
         price_display = ""
         if retail_col and pd.notna(product[retail_col]):
             price_value = str(product[retail_col])
-            if not price_value.startswith('):
+            if not price_value.startswith('$'):
                 price_display = f"${price_value}"
             else:
                 price_display = price_value
