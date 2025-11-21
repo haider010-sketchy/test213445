@@ -48,8 +48,6 @@ if 'current_processing_id' not in st.session_state:
     st.session_state.current_processing_id = 0
 if 'total_processing_count' not in st.session_state:
     st.session_state.total_processing_count = 0
-if 'show_prices' not in st.session_state:
-    st.session_state.show_prices = True
 
 @st.cache_resource
 def get_supabase_client():
@@ -71,50 +69,27 @@ def store_image_to_supabase(asin, image_url, source_type="amazon", retail_price=
             add_log(f"Image already exists for ASIN {asin}, skipping", "warning")
             return False
         
-        # Build data dict - only include retail_price if provided
+        # Insert new image with retail price
         data = {
             'asin': asin,
             'image_url': image_url,
             'image_hash': image_hash,
             'source_type': source_type,
+            'retail_price': retail_price,
             'created_at': time.strftime("%Y-%m-%d %H:%M:%S")
         }
-        
-        # Only add retail_price if it's provided (table must have this column)
-        if retail_price is not None:
-            data['retail_price'] = retail_price
         
         result = supabase.table('product_images').insert(data).execute()
         
         if result.data:
-            price_msg = f" with price {retail_price}" if retail_price is not None else ""
-            add_log(f"Stored image for ASIN {asin} to Supabase{price_msg}", "success")
+            add_log(f"Stored image for ASIN {asin} to Supabase with price {retail_price}", "success")
             return True
         else:
             add_log(f"Failed to store image for ASIN {asin}", "error")
             return False
             
     except Exception as e:
-        # More helpful error message
-        error_msg = str(e)
-        if 'retail_price' in error_msg and 'not find' in error_msg:
-            add_log(f"Supabase table missing 'retail_price' column. Storing without price for ASIN {asin}", "warning")
-            # Try again without retail_price
-            try:
-                data_without_price = {
-                    'asin': asin,
-                    'image_url': image_url,
-                    'image_hash': image_hash,
-                    'source_type': source_type,
-                    'created_at': time.strftime("%Y-%m-%d %H:%M:%S")
-                }
-                result = supabase.table('product_images').insert(data_without_price).execute()
-                if result.data:
-                    add_log(f"Stored image for ASIN {asin} without price", "success")
-                    return True
-            except:
-                pass
-        add_log(f"Supabase error for ASIN {asin}: {error_msg}", "error")
+        add_log(f"Supabase error for ASIN {asin}: {str(e)}", "error")
         return False
 
 def delete_all_images_from_supabase():
@@ -144,14 +119,7 @@ def get_stored_images_count():
 def load_stored_images_from_supabase(source_filter="amazon"):
     try:
         supabase = get_supabase_client()
-        
-        # Try with retail_price first
-        try:
-            result = supabase.table('product_images').select('*').eq('source_type', source_filter).order('retail_price', desc=True, nulls_last=True).execute()
-        except:
-            # If retail_price column doesn't exist, load without sorting
-            add_log("Retail price column not found in database, loading without price sorting", "info")
-            result = supabase.table('product_images').select('*').eq('source_type', source_filter).execute()
+        result = supabase.table('product_images').select('*').eq('source_type', source_filter).order('retail_price', desc=True, nullslast=True).execute()
         
         if result.data:
             stored_data = []
@@ -167,8 +135,7 @@ def load_stored_images_from_supabase(source_filter="amazon"):
                 })
             
             df = pd.DataFrame(stored_data)
-            sort_msg = " (sorted by price)" if result.data and 'retail_price' in result.data[0] else ""
-            add_log(f"Loaded {len(stored_data)} stored {source_filter} images from Supabase{sort_msg}", "success")
+            add_log(f"Loaded {len(stored_data)} stored {source_filter} images from Supabase (sorted by price)", "success")
             return df
         else:
             add_log(f"No stored {source_filter} images found in Supabase", "info")
@@ -202,6 +169,117 @@ def combine_stored_and_new_images(new_df=None, source_type="amazon"):
     else:
         # Only return stored images
         return stored_df
+
+def generate_error_report(df, failed_asins, logs):
+    """Generate a comprehensive error report CSV"""
+    report_data = []
+    
+    # Analyze each failed ASIN
+    for asin in failed_asins:
+        asin_row = df[df['Asin'] == asin].iloc[0] if 'Asin' in df.columns and not df[df['Asin'] == asin].empty else None
+        
+        # Find relevant log entries for this ASIN
+        asin_logs = [msg for level, msg in logs if str(asin) in str(msg)]
+        
+        # Determine error category
+        error_category = "Unknown Error"
+        error_detail = ""
+        retry_recommended = "No"
+        
+        if any("404" in log or "not found" in log.lower() for log in asin_logs):
+            error_category = "Product Not Found"
+            error_detail = "ASIN does not exist on Amazon"
+            retry_recommended = "No"
+        elif any("robot" in log.lower() or "captcha" in log.lower() for log in asin_logs):
+            error_category = "Bot Detection"
+            error_detail = "CAPTCHA or bot check triggered"
+            retry_recommended = "Yes"
+        elif any("No image found" in log or "no image" in log.lower() for log in asin_logs):
+            error_category = "No Image Available"
+            error_detail = "Product page has no landingImage"
+            retry_recommended = "Maybe"
+        elif any("rate limit" in log.lower() or "429" in log for log in asin_logs):
+            error_category = "Rate Limit"
+            error_detail = "API rate limit exceeded"
+            retry_recommended = "Yes"
+        elif any("timeout" in log.lower() or "503" in log for log in asin_logs):
+            error_category = "Timeout/Service Unavailable"
+            error_detail = "Connection timeout or service unavailable"
+            retry_recommended = "Yes"
+        elif any("Failed after 3 attempts" in log for log in asin_logs):
+            error_category = "Multiple Failures"
+            error_detail = "Failed all 3 retry attempts"
+            retry_recommended = "Maybe"
+        
+        # Get retail price if available
+        retail_price = ""
+        if asin_row is not None:
+            retail_columns = ['Retail', 'retail', 'Price', 'price', 'Cost', 'cost']
+            for col in retail_columns:
+                if col in df.columns and pd.notna(asin_row[col]):
+                    retail_price = str(asin_row[col])
+                    break
+        
+        report_data.append({
+            'ASIN': asin,
+            'Retail_Price': retail_price,
+            'Error_Category': error_category,
+            'Error_Detail': error_detail,
+            'Retry_Recommended': retry_recommended,
+            'Log_Summary': ' | '.join(asin_logs[:3]) if asin_logs else 'No logs found'
+        })
+    
+    report_df = pd.DataFrame(report_data)
+    
+    # Add summary statistics at the top
+    summary_data = []
+    total_failed = len(failed_asins)
+    
+    # Count by error category
+    error_counts = report_df['Error_Category'].value_counts() if not report_df.empty else pd.Series()
+    
+    summary_data.append({
+        'ASIN': '=== SUMMARY ===',
+        'Retail_Price': '',
+        'Error_Category': f'Total Failed: {total_failed}',
+        'Error_Detail': '',
+        'Retry_Recommended': '',
+        'Log_Summary': ''
+    })
+    
+    for error_type, count in error_counts.items():
+        percentage = (count / total_failed * 100) if total_failed > 0 else 0
+        summary_data.append({
+            'ASIN': '',
+            'Retail_Price': '',
+            'Error_Category': error_type,
+            'Error_Detail': f'{count} failures ({percentage:.1f}%)',
+            'Retry_Recommended': '',
+            'Log_Summary': ''
+        })
+    
+    summary_data.append({
+        'ASIN': '',
+        'Retail_Price': '',
+        'Error_Category': '',
+        'Error_Detail': '',
+        'Retry_Recommended': '',
+        'Log_Summary': ''
+    })
+    
+    summary_data.append({
+        'ASIN': '=== DETAILED ERRORS ===',
+        'Retail_Price': '',
+        'Error_Category': '',
+        'Error_Detail': '',
+        'Retry_Recommended': '',
+        'Log_Summary': ''
+    })
+    
+    summary_df = pd.DataFrame(summary_data)
+    final_report = pd.concat([summary_df, report_df], ignore_index=True)
+    
+    return final_report
 
 def add_custom_css():
     st.markdown("""
@@ -740,6 +818,22 @@ def add_custom_css():
         font-size: 9px;
         font-weight: bold;
     }
+    
+    .error-report-panel {
+        background-color: #fff3cd;
+        border-left: 5px solid #ffc107;
+        padding: 15px;
+        margin: 15px 0;
+        border-radius: 5px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .error-report-title {
+        color: #856404;
+        font-weight: bold;
+        font-size: 18px;
+        margin-bottom: 10px;
+    }
 
     @media (max-width: 768px) {
         .image-grid {
@@ -1049,7 +1143,7 @@ def process_amazon_data(df, max_rows=None):
                 if not asin_row.empty:
                     price_value = asin_row.iloc[0][retail_col]
                     if pd.notna(price_value):
-                        retail_price = str(price_value).replace(',', '').replace('#', '')
+                        retail_price = str(price_value).replace(', '').replace(',', '').replace('#', '')
                         try:
                             retail_price = float(retail_price)
                         except:
@@ -1131,18 +1225,84 @@ def process_amazon_data(df, max_rows=None):
     status_text.empty()
     processing_status.empty()
     
+    # Display success/failure stats
+    success_count = len(enriched_df[enriched_df['Fetch_Success'] == True])
+    failed_count = len(st.session_state.failed_asins)
+    
+    st.markdown("---")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("✅ Successful", success_count, help="ASINs with images retrieved successfully")
+    
+    with col2:
+        st.metric("❌ Failed", failed_count, help="ASINs that failed to retrieve images")
+    
+    with col3:
+        success_rate = (success_count / total_asins * 100) if total_asins > 0 else 0
+        st.metric("📊 Success Rate", f"{success_rate:.1f}%", help="Percentage of successful retrievals")
+    
     if st.session_state.failed_asins:
-        failed_count = len(st.session_state.failed_asins)
         st.markdown(f"""
         <div class="failed-asin-list">
             <div class="failed-asin-title">⚠️ Failed to retrieve images for {failed_count} ASINs:</div>
             <div>
         """, unsafe_allow_html=True)
         
-        for failed_asin in st.session_state.failed_asins:
+        for failed_asin in st.session_state.failed_asins[:20]:
             st.markdown(f'<span class="failed-asin-item">{failed_asin}</span>', unsafe_allow_html=True)
         
+        if failed_count > 20:
+            st.markdown(f'<span class="failed-asin-item">... and {failed_count - 20} more</span>', unsafe_allow_html=True)
+        
         st.markdown('</div></div>', unsafe_allow_html=True)
+        
+        # ERROR REPORT SECTION
+        st.markdown("---")
+        st.markdown("""
+        <div class="error-report-panel">
+            <div class="error-report-title">📊 Detailed Error Report Available</div>
+            <p>Download a comprehensive report to understand what happened to each failed ASIN, including:</p>
+            <ul>
+                <li>Error categories and specific details</li>
+                <li>Retry recommendations</li>
+                <li>Summary statistics by error type</li>
+                <li>Log summaries for debugging</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Generate error report
+        error_report = generate_error_report(
+            enriched_df, 
+            st.session_state.failed_asins, 
+            st.session_state.logs
+        )
+        
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            # Show a preview of error categories
+            with st.expander("📋 Error Summary Preview", expanded=True):
+                error_counts = error_report['Error_Category'].value_counts()
+                error_counts = error_counts[error_counts.index != '']
+                
+                if not error_counts.empty:
+                    for error_type, count in error_counts.items():
+                        if error_type not in ['=== SUMMARY ===', '=== DETAILED ERRORS ===']:
+                            percentage = (count / failed_count * 100) if failed_count > 0 else 0
+                            st.write(f"**{error_type}**: {count} ({percentage:.1f}%)")
+        
+        with col2:
+            st.download_button(
+                label="📥 Download Error Report",
+                data=error_report.to_csv(index=False),
+                file_name=f"error_report_{time.strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                key="error_report_download",
+                help="Download detailed report of all failed ASINs",
+                type="primary"
+            )
     
     return enriched_df
 
@@ -1377,11 +1537,11 @@ def display_product_grid(df, search_term=None, min_price=None, max_price=None, s
         # Clean and convert retail prices to numeric
         try:
             # Remove $ signs, commas, and convert to float
-            filtered_df[f'{retail_col}_numeric'] = filtered_df[retail_col].astype(str).str.replace(',', '').str.replace('#', '')
+            filtered_df[f'{retail_col}_numeric'] = filtered_df[retail_col].astype(str).str.replace(', '').str.replace(',', '').str.replace('#', '')
             filtered_df[f'{retail_col}_numeric'] = pd.to_numeric(filtered_df[f'{retail_col}_numeric'], errors='coerce')
             
             # Sort by retail price (highest to lowest)
-            filtered_df = filtered_df.sort_values(by=f'{retail_col}_numeric', ascending=False, na_position='last')
+            filtered_df = filtered_df.sort_values(by=f'{retail_col}_numeric', ascending=False, na_last=True)
             
             st.info(f"📊 Images automatically sorted by {retail_col} (highest to lowest)")
         except Exception as e:
@@ -1457,11 +1617,11 @@ def display_product_grid(df, search_term=None, min_price=None, max_price=None, s
         if not image_url:
             image_url = "https://placehold.co/200x200?text=No+Image"
         
-        # Get price for overlay - check show_prices toggle
+        # Get price for overlay
         price_display = ""
-        if retail_col and pd.notna(product[retail_col]) and st.session_state.show_prices:
+        if retail_col and pd.notna(product[retail_col]):
             price_value = str(product[retail_col])
-            if not price_value.startswith('$'):
+            if not price_value.startswith('):
                 price_display = f"${price_value}"
             else:
                 price_display = price_value
@@ -1500,11 +1660,11 @@ def display_fullscreen_grid(df, search_term=None, min_price=None, max_price=None
         # Clean and convert retail prices to numeric
         try:
             # Remove $ signs, commas, and convert to float
-            filtered_df[f'{retail_col}_numeric'] = filtered_df[retail_col].astype(str).str.replace(',', '').str.replace('#', '')
+            filtered_df[f'{retail_col}_numeric'] = filtered_df[retail_col].astype(str).str.replace(', '').str.replace(',', '').str.replace('#', '')
             filtered_df[f'{retail_col}_numeric'] = pd.to_numeric(filtered_df[f'{retail_col}_numeric'], errors='coerce')
             
             # Sort by retail price (highest to lowest)
-            filtered_df = filtered_df.sort_values(by=f'{retail_col}_numeric', ascending=False, na_position='last')
+            filtered_df = filtered_df.sort_values(by=f'{retail_col}_numeric', ascending=False, na_last=True)
         except Exception as e:
             pass  # Silent fail in fullscreen mode
     
@@ -1667,11 +1827,11 @@ def display_fullscreen_grid(df, search_term=None, min_price=None, max_price=None
         if not image_url:
             image_url = "https://placehold.co/200x200?text=No+Image"
         
-        # Get price for overlay - check show_prices toggle
+        # Get price for overlay
         price_display = ""
-        if retail_col and pd.notna(product[retail_col]) and st.session_state.show_prices:
+        if retail_col and pd.notna(product[retail_col]):
             price_value = str(product[retail_col])
-            if not price_value.startswith('$'):
+            if not price_value.startswith('):
                 price_display = f"${price_value}"
             else:
                 price_display = price_value
@@ -1739,7 +1899,7 @@ def render_amazon_grid_tab():
     """, unsafe_allow_html=True)
     
     # Supabase Status Panel
-    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+    col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
         search_term = st.text_input("Search by ASIN", key="amazon_grid_search")
@@ -1749,13 +1909,6 @@ def render_amazon_grid_tab():
         st.metric("Stored Amazon Images", stored_count)
     
     with col3:
-        # Price toggle button
-        price_button_label = "💰 Hide Prices" if st.session_state.show_prices else "💰 Show Prices"
-        if st.button(price_button_label, key="toggle_prices_btn", help="Show/hide price tags on images"):
-            st.session_state.show_prices = not st.session_state.show_prices
-            st.rerun()
-    
-    with col4:
         if 'show_delete_confirm' not in st.session_state:
             st.session_state.show_delete_confirm = False
             
@@ -1764,32 +1917,31 @@ def render_amazon_grid_tab():
                 st.session_state.show_delete_confirm = True
                 st.rerun()
         else:
-            col4a, col4b = st.columns(2)
-            with col4a:
+            col3a, col3b = st.columns(2)
+            with col3a:
                 if st.button("✅ Confirm", key="confirm_delete", type="primary"):
                     if delete_all_images_from_supabase():
                         st.session_state.processed_data = pd.DataFrame()
                         st.success("All Amazon images deleted!")
                     st.session_state.show_delete_confirm = False
                     st.rerun()
-            with col4b:
+            with col3b:
                 if st.button("❌ Cancel", key="cancel_delete", type="secondary"):
                     st.session_state.show_delete_confirm = False
                     st.rerun()
     
-    col5, col6 = st.columns([2, 1])
+    col4, col5 = st.columns([2, 1])
     
-    with col5:
+    with col4:
         if st.button("🔄 Reload Amazon Images", key="reload_btn", help="Reload Amazon images from Supabase"):
             st.session_state.processed_data = load_stored_images_from_supabase("amazon")
             st.rerun()
     
-    with col6:
+    with col5:
         fullscreen_button = st.button("🖼️ Full Screen View", key="amazon_grid_fullscreen_btn", help="View images in a fullscreen 7-column grid")
     
     total_products = len(st.session_state.processed_data)
-    price_status = "with prices" if st.session_state.show_prices else "without prices"
-    st.write(f"Displaying {total_products} Amazon images in 5-column grid ({price_status})")
+    st.write(f"Displaying {total_products} Amazon images in 5-column grid")
     
     if fullscreen_button:
         st.session_state.fullscreen_mode = True
