@@ -1143,7 +1143,7 @@ def process_amazon_data(df, max_rows=None):
                 if not asin_row.empty:
                     price_value = asin_row.iloc[0][retail_col]
                     if pd.notna(price_value):
-                        retail_price = str(price_value).replace(',', '').replace('#', '')
+                        retail_price = str(price_value).replace('$', '').replace(',', '').replace('#', '')
                         try:
                             retail_price = float(retail_price)
                         except:
@@ -1288,22 +1288,22 @@ def process_amazon_data(df, max_rows=None):
                 error_counts = error_counts[error_counts.index != '']
                 
                 if not error_counts.empty:
-                    st.markdown("""
-                    <div style="background-color: #2b2b2b; padding: 15px; border-radius: 5px; color: white;">
-                    """, unsafe_allow_html=True)
+                    # Build the HTML string with proper styling
+                    error_html = '<div style="background-color: #2b2b2b !important; padding: 15px; border-radius: 5px;">'
                     
                     for error_type, count in error_counts.items():
                         if error_type not in ['=== SUMMARY ===', '=== DETAILED ERRORS ===']:
                             percentage = (count / failed_count * 100) if failed_count > 0 else 0
-                            st.markdown(f"""
-                            <div style="margin: 8px 0; padding: 8px; background-color: #1a1a1a; border-radius: 3px; color: white;">
-                                <span style="font-weight: bold; color: #4ec9b0;">{error_type}:</span> 
-                                <span style="color: #dcdcaa;">{count}</span> 
-                                <span style="color: #ce9178;">({percentage:.1f}%)</span>
+                            error_html += f'''
+                            <div style="margin: 8px 0; padding: 8px; background-color: #1a1a1a !important; border-radius: 3px;">
+                                <span style="font-weight: bold; color: #4ec9b0 !important;">{error_type}:</span> 
+                                <span style="color: #dcdcaa !important;">{count}</span> 
+                                <span style="color: #ce9178 !important;">({percentage:.1f}%)</span>
                             </div>
-                            """, unsafe_allow_html=True)
+                            '''
                     
-                    st.markdown("</div>", unsafe_allow_html=True)
+                    error_html += '</div>'
+                    st.markdown(error_html, unsafe_allow_html=True)
         
         with col2:
             st.download_button(
@@ -1549,7 +1549,7 @@ def display_product_grid(df, search_term=None, min_price=None, max_price=None, s
         # Clean and convert retail prices to numeric
         try:
             # Remove $ signs, commas, and convert to float
-            filtered_df[f'{retail_col}_numeric'] = filtered_df[retail_col].astype(str).str.replace(',', '').str.replace('#', '')
+            filtered_df[f'{retail_col}_numeric'] = filtered_df[retail_col].astype(str).str.replace('$', '').str.replace(',', '').str.replace('#', '')
             filtered_df[f'{retail_col}_numeric'] = pd.to_numeric(filtered_df[f'{retail_col}_numeric'], errors='coerce')
             
             # Sort by retail price (highest to lowest)
