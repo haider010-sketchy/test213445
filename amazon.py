@@ -121,6 +121,8 @@ def load_stored_images_from_supabase(source_filter="amazon"):
         supabase = get_supabase_client()
         result = supabase.table('product_images').select('*').eq('source_type', source_filter).order('retail_price', desc=True, nullslast=True).execute()
         
+        print(f"DEBUG: Query result count: {len(result.data) if result.data else 0}")  # ADD THIS
+        print(f"DEBUG: Result data: {result.data[:2] if result.data else 'None'}")  # ADD THIS
         if result.data:
             stored_data = []
             for item in result.data:
