@@ -48,6 +48,8 @@ if 'current_processing_id' not in st.session_state:
     st.session_state.current_processing_id = 0
 if 'total_processing_count' not in st.session_state:
     st.session_state.total_processing_count = 0
+if 'show_prices' not in st.session_state:
+    st.session_state.show_prices = True
 
 @st.cache_resource
 def get_supabase_client():
@@ -119,10 +121,10 @@ def get_stored_images_count():
 def load_stored_images_from_supabase(source_filter="amazon"):
     try:
         supabase = get_supabase_client()
-        result = supabase.table('product_images').select('*').eq('source_type', source_filter).order('retail_price', desc=True, nullslast=True).execute()
+        result = supabase.table('product_images').select('*').eq('source_type', source_filter).order('retail_price', desc=True, nullsfirst=False).execute()
         
-        print(f"DEBUG: Query result count: {len(result.data) if result.data else 0}")  # ADD THIS
-        print(f"DEBUG: Result data: {result.data[:2] if result.data else 'None'}")  # ADD THIS
+        print(f"DEBUG: Query result count: {len(result.data) if result.data else 0}")
+        print(f"DEBUG: Result data: {result.data[:2] if result.data else 'None'}")
         if result.data:
             stored_data = []
             for item in result.data:
@@ -149,6 +151,7 @@ def load_stored_images_from_supabase(source_filter="amazon"):
 
 def combine_stored_and_new_images(new_df=None, source_type="amazon"):
     stored_df = load_stored_images_from_supabase(source_type)
+
     
     if new_df is not None and not new_df.empty:
         # Combine stored and new images
@@ -1074,13 +1077,31 @@ def process_amazon_data(df, max_rows=None):
         st.error(f"No ASIN/SKU column found. Available columns: {list(df.columns)}")
         return None
 
-    retail_columns = ['Retail', 'retail', 'Price', 'price', 'Cost', 'cost']
+    # Intelligent price column detection - prioritized list
+    price_column_patterns = [
+        'MSRP', 'msrp', 'EXT MSRP', 'ext msrp', 'Ext MSRP',  # MSRP variations
+        'Retail', 'retail', 'RETAIL',  # Retail variations
+        'Price', 'price', 'PRICE',  # Price variations
+        'Cost', 'cost', 'COST',  # Cost variations
+        'List Price', 'list price', 'LIST PRICE',  # List price
+        'Unit Price', 'unit price', 'UNIT PRICE',  # Unit price
+    ]
+    
     retail_col = None
     
-    for col in retail_columns:
-        if col in df.columns:
-            retail_col = col
+    # First, try exact matches in priority order
+    for pattern in price_column_patterns:
+        if pattern in df.columns:
+            retail_col = pattern
             break
+    
+    # If no exact match, try partial matches (contains)
+    if not retail_col:
+        for col in df.columns:
+            col_lower = col.lower().strip()
+            if any(keyword in col_lower for keyword in ['msrp', 'retail', 'price', 'cost']):
+                retail_col = col
+                break
     
     if retail_col:
         st.info(f"💰 Found price column: '{retail_col}' - prices will be preserved for sorting!")
@@ -1510,7 +1531,7 @@ def display_product_grid(df, search_term=None, min_price=None, max_price=None, s
             filtered_df[f'{retail_col}_numeric'] = filtered_df[retail_col].astype(str).str.replace('$', '').str.replace(',', '').str.replace('#', '')
             filtered_df[f'{retail_col}_numeric'] = pd.to_numeric(filtered_df[f'{retail_col}_numeric'], errors='coerce')
             
-            filtered_df = filtered_df.sort_values(by=f'{retail_col}_numeric', ascending=False, na_last=True)
+            filtered_df = filtered_df.sort_values(by=f'{retail_col}_numeric', ascending=False, na_position='last')
             
             st.info(f"📊 Images automatically sorted by {retail_col} (highest to lowest)")
         except Exception as e:
@@ -1587,7 +1608,7 @@ def display_product_grid(df, search_term=None, min_price=None, max_price=None, s
             image_url = "https://placehold.co/200x200?text=No+Image"
         
         price_display = ""
-        if retail_col and pd.notna(product[retail_col]):
+        if retail_col and pd.notna(product[retail_col]) and st.session_state.show_prices:
             price_value = str(product[retail_col])
             if not price_value.startswith('$'):
                 price_display = f"${price_value}"
@@ -1628,7 +1649,7 @@ def display_fullscreen_grid(df, search_term=None, min_price=None, max_price=None
             filtered_df[f'{retail_col}_numeric'] = filtered_df[retail_col].astype(str).str.replace('$', '').str.replace(',', '').str.replace('#', '')
             filtered_df[f'{retail_col}_numeric'] = pd.to_numeric(filtered_df[f'{retail_col}_numeric'], errors='coerce')
             
-            filtered_df = filtered_df.sort_values(by=f'{retail_col}_numeric', ascending=False, na_last=True)
+            filtered_df = filtered_df.sort_values(by=f'{retail_col}_numeric', ascending=False, na_position='last')
         except Exception as e:
             pass
     
@@ -1792,7 +1813,7 @@ def display_fullscreen_grid(df, search_term=None, min_price=None, max_price=None
             image_url = "https://placehold.co/200x200?text=No+Image"
         
         price_display = ""
-        if retail_col and pd.notna(product[retail_col]):
+        if retail_col and pd.notna(product[retail_col]) and st.session_state.show_prices:
             price_value = str(product[retail_col])
             if not price_value.startswith('$'):
                 price_display = f"${price_value}"
@@ -1890,7 +1911,7 @@ def render_amazon_grid_tab():
                     st.session_state.show_delete_confirm = False
                     st.rerun()
     
-    col4, col5 = st.columns([2, 1])
+    col4, col5, col6 = st.columns([2, 1, 1])
     
     with col4:
         if st.button("🔄 Reload Amazon Images", key="reload_btn", help="Reload Amazon images from Supabase"):
@@ -1899,6 +1920,15 @@ def render_amazon_grid_tab():
     
     with col5:
         fullscreen_button = st.button("🖼️ Full Screen View", key="amazon_grid_fullscreen_btn", help="View images in a fullscreen 7-column grid")
+    
+    with col6:
+        if st.button(
+            f"{'🏷️ Show Prices' if not st.session_state.show_prices else '🚫 Hide Prices'}", 
+            key="toggle_prices_btn",
+            help="Toggle price visibility on images"
+        ):
+            st.session_state.show_prices = not st.session_state.show_prices
+            st.rerun()
     
     total_products = len(st.session_state.processed_data)
     st.write(f"Displaying {total_products} Amazon images in 5-column grid")
