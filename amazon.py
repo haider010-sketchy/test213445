@@ -1233,11 +1233,7 @@ def process_amazon_data(df, max_rows=None):
         st.metric("📊 Success Rate", f"{success_rate:.1f}%", help="Percentage of successful retrievals")
     
     if st.session_state.failed_asins:
-        st.markdown(f"""
-        <div class="failed-asin-list">
-            <div class="failed-asin-title" style="color: black !important;">⚠️ Failed to retrieve images for {failed_count} ASINs:</div>
-            <div>
-        """, unsafe_allow_html=True)
+    
         
         for failed_asin in st.session_state.failed_asins[:20]:
             st.markdown(f'<span class="failed-asin-item">{failed_asin}</span>', unsafe_allow_html=True)
@@ -1248,18 +1244,6 @@ def process_amazon_data(df, max_rows=None):
         st.markdown('</div></div>', unsafe_allow_html=True)
         
         st.markdown("---")
-        st.markdown("""
-        <div class="error-report-panel" style="color: #000000 !important;">
-            <div class="error-report-title" style="color: #000000 !important;">📊 Detailed Error Report Available</div>
-            <p style="color: #000000 !important;">Download a comprehensive report to understand what happened to each failed ASIN, including:</p>
-            <ul style="color: #000000 !important;">
-                <li style="color: #000000 !important;">Error categories and specific details</li>
-                <li style="color: #000000 !important;">Retry recommendations</li>
-                <li style="color: #000000 !important;">Summary statistics by error type</li>
-                <li style="color: #000000 !important;">Log summaries for debugging</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
         
         error_report = generate_error_report(
             enriched_df, 
