@@ -723,11 +723,11 @@ def add_custom_css():
     }
     
     .failed-asin-title {
-        color: white;
+        color: black;
         font-weight: bold;
         font-size: 16px;
         margin-bottom: 10px;
-        text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+        text-shadow: 1px 1px 2px rgba(255,255,255,0.5);
     }
     
     .failed-asin-item {
@@ -829,7 +829,7 @@ def add_custom_css():
     }
     
     .error-report-title {
-        color: #856404;
+        color: #000000;
         font-weight: bold;
         font-size: 18px;
         margin-bottom: 10px;
@@ -921,7 +921,6 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count, reta
             time.sleep(sleep_time)
         
         try:
-            # ZYTE API REQUEST
             if not ZYTE_API_KEY:
                 log_queue.put(('error', f'ASIN {asin}: Zyte API key not found in environment variables'))
                 product_details['error'] = 'Zyte API key not configured'
@@ -945,7 +944,6 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count, reta
             if api_response.status_code == 200:
                 response_data = api_response.json()
                 
-                # Decode the response body from base64
                 http_response_body = base64.b64decode(response_data["httpResponseBody"])
                 resp_text = http_response_body.decode('utf-8', errors='ignore')
                 
@@ -955,17 +953,14 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count, reta
                 page_title = soup.title.string if soup.title else "No title found"
                 log_queue.put(('info', f'ASIN {asin}: Page title: "{page_title}"'))
                 
-                # CHECK IF IT'S A CAPTCHA OR ROBOT CHECK PAGE
                 if "robot" in resp_text.lower() or "captcha" in resp_text.lower():
                     log_queue.put(('warning', f'ASIN {asin}: Bot detection page detected on attempt {attempt+1}'))
                 
-                # CHECK IF PRODUCT EXISTS
                 if "does not exist" in resp_text.lower() or "page not found" in resp_text.lower():
                     log_queue.put(('error', f'ASIN {asin}: Product not found on attempt {attempt+1}'))
                 
                 log_queue.put(('success', f'ASIN {asin}: Retrieved page on attempt {attempt+1}'))
                 
-                # COUNT TOTAL IMAGES FOR DEBUG
                 all_images = soup.find_all("img")
                 log_queue.put(('info', f'ASIN {asin}: Found {len(all_images)} total images on page'))
                 
@@ -993,7 +988,6 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count, reta
                         product_details['success'] = True
                         log_queue.put(('success', f'ASIN {asin}: Found image on attempt {attempt+1}'))
                         
-                        # Store to Supabase WITH RETAIL PRICE
                         store_image_to_supabase(asin, largest_image, "amazon", retail_price)
                         
                         return product_details
@@ -1009,7 +1003,6 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count, reta
                     product_details['success'] = True
                     log_queue.put(('success', f'ASIN {asin}: Found image on attempt {attempt+1}'))
                     
-                    # Store to Supabase WITH RETAIL PRICE
                     store_image_to_supabase(asin, src_url, "amazon", retail_price)
                     
                     return product_details
@@ -1079,7 +1072,6 @@ def process_amazon_data(df, max_rows=None):
         st.error(f"No ASIN/SKU column found. Available columns: {list(df.columns)}")
         return None
 
-    # FIND RETAIL PRICE COLUMN
     retail_columns = ['Retail', 'retail', 'Price', 'price', 'Cost', 'cost']
     retail_col = None
     
@@ -1136,7 +1128,6 @@ def process_amazon_data(df, max_rows=None):
         for i, asin in enumerate(asins):
             processing_id = start_index + i + 1
             
-            # GET RETAIL PRICE FOR THIS ASIN
             retail_price = None
             if retail_col:
                 asin_row = df_copy[df_copy['Asin'] == asin]
@@ -1225,7 +1216,6 @@ def process_amazon_data(df, max_rows=None):
     status_text.empty()
     processing_status.empty()
     
-    # Display success/failure stats
     success_count = len(enriched_df[enriched_df['Fetch_Success'] == True])
     failed_count = len(st.session_state.failed_asins)
     
@@ -1245,7 +1235,7 @@ def process_amazon_data(df, max_rows=None):
     if st.session_state.failed_asins:
         st.markdown(f"""
         <div class="failed-asin-list">
-            <div class="failed-asin-title">⚠️ Failed to retrieve images for {failed_count} ASINs:</div>
+            <div class="failed-asin-title" style="color: black !important;">⚠️ Failed to retrieve images for {failed_count} ASINs:</div>
             <div>
         """, unsafe_allow_html=True)
         
@@ -1257,22 +1247,20 @@ def process_amazon_data(df, max_rows=None):
         
         st.markdown('</div></div>', unsafe_allow_html=True)
         
-        # ERROR REPORT SECTION
         st.markdown("---")
         st.markdown("""
-        <div class="error-report-panel">
-            <div class="error-report-title">📊 Detailed Error Report Available</div>
-            <p>Download a comprehensive report to understand what happened to each failed ASIN, including:</p>
-            <ul>
-                <li>Error categories and specific details</li>
-                <li>Retry recommendations</li>
-                <li>Summary statistics by error type</li>
-                <li>Log summaries for debugging</li>
+        <div class="error-report-panel" style="color: #000000 !important;">
+            <div class="error-report-title" style="color: #000000 !important;">📊 Detailed Error Report Available</div>
+            <p style="color: #000000 !important;">Download a comprehensive report to understand what happened to each failed ASIN, including:</p>
+            <ul style="color: #000000 !important;">
+                <li style="color: #000000 !important;">Error categories and specific details</li>
+                <li style="color: #000000 !important;">Retry recommendations</li>
+                <li style="color: #000000 !important;">Summary statistics by error type</li>
+                <li style="color: #000000 !important;">Log summaries for debugging</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
         
-        # Generate error report
         error_report = generate_error_report(
             enriched_df, 
             st.session_state.failed_asins, 
@@ -1282,28 +1270,15 @@ def process_amazon_data(df, max_rows=None):
         col1, col2 = st.columns([3, 1])
         
         with col1:
-            # Show a preview of error categories
             with st.expander("📋 Error Summary Preview", expanded=True):
                 error_counts = error_report['Error_Category'].value_counts()
                 error_counts = error_counts[error_counts.index != '']
                 
                 if not error_counts.empty:
-                    # Build the HTML string with proper styling
-                    error_html = '<div style="background-color: #2b2b2b !important; padding: 15px; border-radius: 5px;">'
-                    
                     for error_type, count in error_counts.items():
                         if error_type not in ['=== SUMMARY ===', '=== DETAILED ERRORS ===']:
                             percentage = (count / failed_count * 100) if failed_count > 0 else 0
-                            error_html += f'''
-                            <div style="margin: 8px 0; padding: 8px; background-color: #1a1a1a !important; border-radius: 3px;">
-                                <span style="font-weight: bold; color: #4ec9b0 !important;">{error_type}:</span> 
-                                <span style="color: #dcdcaa !important;">{count}</span> 
-                                <span style="color: #ce9178 !important;">({percentage:.1f}%)</span>
-                            </div>
-                            '''
-                    
-                    error_html += '</div>'
-                    st.markdown(error_html, unsafe_allow_html=True)
+                            st.markdown(f"**{error_type}:** {count} ({percentage:.1f}%)")
         
         with col2:
             st.download_button(
@@ -1394,7 +1369,7 @@ def process_direct_urls_data(df, max_rows=None):
         failed_count = len(st.session_state.failed_asins)
         st.markdown(f"""
         <div class="failed-asin-list">
-            <div class="failed-asin-title">⚠️ No image URLs found for {failed_count} items:</div>
+            <div class="failed-asin-title" style="color: black !important;">⚠️ No image URLs found for {failed_count} items:</div>
             <div>
         """, unsafe_allow_html=True)
         
@@ -1492,7 +1467,7 @@ def process_excel_format_data(df, max_rows=None):
         failed_count = len(st.session_state.failed_asins)
         st.markdown(f"""
         <div class="failed-asin-list">
-            <div class="failed-asin-title">⚠️ Invalid image URLs found for {failed_count} items:</div>
+            <div class="failed-asin-title" style="color: black !important;">⚠️ Invalid image URLs found for {failed_count} items:</div>
             <div>
         """, unsafe_allow_html=True)
         
@@ -1536,7 +1511,6 @@ def display_product_grid(df, search_term=None, min_price=None, max_price=None, s
         
     filtered_df = df.copy()
     
-    # AUTO-SORT BY RETAIL PRICE IF RETAIL COLUMN EXISTS
     retail_columns = ['Retail', 'retail', 'Price', 'price', 'Cost', 'cost']
     retail_col = None
     
@@ -1546,13 +1520,10 @@ def display_product_grid(df, search_term=None, min_price=None, max_price=None, s
             break
     
     if retail_col:
-        # Clean and convert retail prices to numeric
         try:
-            # Remove $ signs, commas, and convert to float
             filtered_df[f'{retail_col}_numeric'] = filtered_df[retail_col].astype(str).str.replace('$', '').str.replace(',', '').str.replace('#', '')
             filtered_df[f'{retail_col}_numeric'] = pd.to_numeric(filtered_df[f'{retail_col}_numeric'], errors='coerce')
             
-            # Sort by retail price (highest to lowest)
             filtered_df = filtered_df.sort_values(by=f'{retail_col}_numeric', ascending=False, na_last=True)
             
             st.info(f"📊 Images automatically sorted by {retail_col} (highest to lowest)")
@@ -1629,7 +1600,6 @@ def display_product_grid(df, search_term=None, min_price=None, max_price=None, s
         if not image_url:
             image_url = "https://placehold.co/200x200?text=No+Image"
         
-        # Get price for overlay
         price_display = ""
         if retail_col and pd.notna(product[retail_col]):
             price_value = str(product[retail_col])
@@ -1659,7 +1629,6 @@ def display_fullscreen_grid(df, search_term=None, min_price=None, max_price=None
         
     filtered_df = df.copy()
     
-    # AUTO-SORT BY RETAIL PRICE IF RETAIL COLUMN EXISTS
     retail_columns = ['Retail', 'retail', 'Price', 'price', 'Cost', 'cost']
     retail_col = None
     
@@ -1669,16 +1638,13 @@ def display_fullscreen_grid(df, search_term=None, min_price=None, max_price=None
             break
     
     if retail_col:
-        # Clean and convert retail prices to numeric
         try:
-            # Remove $ signs, commas, and convert to float
             filtered_df[f'{retail_col}_numeric'] = filtered_df[retail_col].astype(str).str.replace('$', '').str.replace(',', '').str.replace('#', '')
             filtered_df[f'{retail_col}_numeric'] = pd.to_numeric(filtered_df[f'{retail_col}_numeric'], errors='coerce')
             
-            # Sort by retail price (highest to lowest)
             filtered_df = filtered_df.sort_values(by=f'{retail_col}_numeric', ascending=False, na_last=True)
         except Exception as e:
-            pass  # Silent fail in fullscreen mode
+            pass
     
     asin_column = None
     if 'Asin' in filtered_df.columns:
@@ -1839,7 +1805,6 @@ def display_fullscreen_grid(df, search_term=None, min_price=None, max_price=None
         if not image_url:
             image_url = "https://placehold.co/200x200?text=No+Image"
         
-        # Get price for overlay
         price_display = ""
         if retail_col and pd.notna(product[retail_col]):
             price_value = str(product[retail_col])
@@ -1888,14 +1853,12 @@ def display_fullscreen_grid(df, search_term=None, min_price=None, max_price=None
     components.html(html_content, height=1000, scrolling=True)
 
 def render_amazon_grid_tab():
-    # ALWAYS reload from Supabase when visiting this tab
     stored_data = load_stored_images_from_supabase("amazon")
     
     if stored_data.empty:
         st.warning("No Amazon data has been processed yet. Please upload and process a CSV file with ASINs in the Upload tab.")
         return
     
-    # Update session state with stored data
     st.session_state.processed_data = stored_data
     
     csv_type = detect_csv_type(st.session_state.processed_data)
@@ -1910,7 +1873,6 @@ def render_amazon_grid_tab():
     </div>
     """, unsafe_allow_html=True)
     
-    # Supabase Status Panel
     col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
@@ -2037,32 +1999,32 @@ def display_simple_product_grid(df):
 
     import streamlit.components.v1 as components
 
-    html_content = f"""
+    html_content = """
     <style>
-        .masonry-container {{
+        .masonry-container {
             height: 800px;
             overflow-y: auto;
             padding: 5px;
             background-color: #f0f0f0;
             border-radius: 5px;
-        }}
-        .masonry-grid {{
+        }
+        .masonry-grid {
             column-count: 5;
             column-gap: 5px;
-        }}
-        .masonry-item {{
+        }
+        .masonry-item {
             margin-bottom: 5px;
             break-inside: avoid;
             border-radius: 4px;
             overflow: hidden;
             background-color: white;
-        }}
-        .masonry-item img {{
+        }
+        .masonry-item img {
             display: block;
             width: 100%;
             height: auto;
             object-fit: cover;
-        }}
+        }
     </style>
     
     <div class="masonry-container">
@@ -2254,7 +2216,6 @@ def render_upload_tab():
                 df = df.dropna(how='all')
                 df = df.reset_index(drop=True)
             
-
             csv_type = detect_csv_type(df)
             total_rows = len(df)
             
@@ -2296,11 +2257,9 @@ def render_upload_tab():
                         
                         if new_data is not None:
                             if csv_type == 'amazon':
-                                # Combine with stored Amazon images only
                                 st.session_state.processed_data = combine_stored_and_new_images(new_data, "amazon")
                                 st.success("Amazon data processed successfully! Check Amazon Grid Images tab to view all Amazon images (stored + new).")
                             else:
-                                # Don't store Excel/Direct URL images, just use new data
                                 st.session_state.processed_data = new_data
                                 st.success("Data processed successfully! Check Excel Grid Images tab to view images (temporary, not stored).")
                         else:
@@ -2323,7 +2282,6 @@ def render_upload_tab():
 def main():
     add_custom_css()
     
-    # Check if Zyte API key is configured
     if not ZYTE_API_KEY:
         st.error("⚠️ Zyte API key not found!")
         st.markdown("""
