@@ -31,6 +31,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# Initialize session state variables
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 if 'fullscreen_mode' not in st.session_state:
@@ -49,6 +50,23 @@ if 'total_processing_count' not in st.session_state:
     st.session_state.total_processing_count = 0
 if 'show_prices' not in st.session_state:
     st.session_state.show_prices = True
+
+# NEW: Batch processing state variables
+if 'batch_processing_state' not in st.session_state:
+    st.session_state.batch_processing_state = {
+        'is_active': False,
+        'current_batch': 0,
+        'total_batches': 0,
+        'asins_to_process': [],
+        'batch_size': 500,
+        'processed_count': 0,
+        'failed_count': 0,
+        'all_failed_asins': [],
+        'all_logs': [],
+        'start_time': None,
+        'df_data': None,
+        'retail_col': None
+    }
 
 @st.cache_resource
 def get_supabase_client():
@@ -147,13 +165,22 @@ def combine_stored_and_new_images(new_df=None, source_type="amazon"):
     else:
         return stored_df
 
-def generate_error_report(df, failed_asins, logs):
+def generate_comprehensive_error_report(all_failed_asins, all_logs, df_data, retail_col):
+    """Generate comprehensive error report for all batches"""
     report_data = []
     
-    for asin in failed_asins:
-        asin_row = df[df['Asin'] == asin].iloc[0] if 'Asin' in df.columns and not df[df['Asin'] == asin].empty else None
-        asin_logs = [msg for level, msg in logs if str(asin) in str(msg)]
+    for asin in all_failed_asins:
+        # Find ASIN in original data for price info
+        asin_row = None
+        if df_data is not None:
+            matching_rows = df_data[df_data['Asin'] == asin]
+            if not matching_rows.empty:
+                asin_row = matching_rows.iloc[0]
         
+        # Get logs for this ASIN
+        asin_logs = [msg for level, msg in all_logs if str(asin) in str(msg)]
+        
+        # Categorize error
         error_category = "Unknown Error"
         error_detail = ""
         retry_recommended = "No"
@@ -178,19 +205,16 @@ def generate_error_report(df, failed_asins, logs):
             error_category = "Timeout/Service Unavailable"
             error_detail = "Connection timeout or service unavailable"
             retry_recommended = "Yes"
+        elif any("Validation error" in log for log in asin_logs):
+            error_category = "Validation Error"
+            error_detail = "Zyte API validation failed"
+            retry_recommended = "Maybe"
         
+        # Get retail price
         retail_price = ""
-        if asin_row is not None:
-            price_column_patterns = [
-                'MSRP', 'msrp', 'EXT MSRP', 'ext msrp', 'Ext MSRP',
-                'Retail', 'retail', 'RETAIL',
-                'Price', 'price', 'PRICE',
-                'Cost', 'cost', 'COST',
-            ]
-            for col in price_column_patterns:
-                if col in df.columns and pd.notna(asin_row[col]):
-                    retail_price = str(asin_row[col])
-                    break
+        if asin_row is not None and retail_col and retail_col in asin_row:
+            if pd.notna(asin_row[retail_col]):
+                retail_price = str(asin_row[retail_col])
         
         report_data.append({
             'ASIN': asin,
@@ -201,20 +225,23 @@ def generate_error_report(df, failed_asins, logs):
             'Log_Summary': ' | '.join(asin_logs[:3]) if asin_logs else 'No logs found'
         })
     
+    # Create summary
     report_df = pd.DataFrame(report_data)
     summary_data = []
-    total_failed = len(failed_asins)
+    total_failed = len(all_failed_asins)
     error_counts = report_df['Error_Category'].value_counts() if not report_df.empty else pd.Series()
     
+    # Summary header
     summary_data.append({
-        'ASIN': '=== SUMMARY ===',
+        'ASIN': '=== PROCESSING SUMMARY ===',
         'Retail_Price': '',
-        'Error_Category': f'Total Failed: {total_failed}',
+        'Error_Category': f'Total Failed ASINs: {total_failed}',
         'Error_Detail': '',
         'Retry_Recommended': '',
         'Log_Summary': ''
     })
     
+    # Error breakdown
     for error_type, count in error_counts.items():
         percentage = (count / total_failed * 100) if total_failed > 0 else 0
         summary_data.append({
@@ -226,6 +253,7 @@ def generate_error_report(df, failed_asins, logs):
             'Log_Summary': ''
         })
     
+    # Separator
     summary_data.append({
         'ASIN': '',
         'Retail_Price': '',
@@ -236,7 +264,7 @@ def generate_error_report(df, failed_asins, logs):
     })
     
     summary_data.append({
-        'ASIN': '=== DETAILED ERRORS ===',
+        'ASIN': '=== DETAILED ERROR LIST ===',
         'Retail_Price': '',
         'Error_Category': '',
         'Error_Detail': '',
@@ -244,8 +272,12 @@ def generate_error_report(df, failed_asins, logs):
         'Log_Summary': ''
     })
     
+    # Combine summary and detailed report
     summary_df = pd.DataFrame(summary_data)
-    final_report = pd.concat([summary_df, report_df], ignore_index=True)
+    if not report_df.empty:
+        final_report = pd.concat([summary_df, report_df], ignore_index=True)
+    else:
+        final_report = summary_df
     
     return final_report
 
@@ -495,6 +527,49 @@ def add_custom_css():
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
 
+    /* NEW: Batch processing status styles */
+    .batch-status-container {
+        background-color: #e8f4fd;
+        border: 2px solid #2196F3;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 15px 0;
+        text-align: center;
+    }
+    
+    .batch-status-title {
+        color: #1976D2;
+        font-size: 18px;
+        font-weight: bold;
+        margin-bottom: 15px;
+    }
+    
+    .batch-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 15px;
+        margin: 15px 0;
+    }
+    
+    .batch-stat-item {
+        background-color: white;
+        padding: 10px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .batch-stat-number {
+        font-size: 24px;
+        font-weight: bold;
+        color: #2196F3;
+    }
+    
+    .batch-stat-label {
+        font-size: 12px;
+        color: #666;
+        margin-top: 5px;
+    }
+
     @media (max-width: 768px) {
         .image-grid {
             grid-template-columns: repeat(3, 1fr);
@@ -535,13 +610,15 @@ def verify_password():
             else:
                 st.markdown('<p class="error-message">Incorrect password. Please try again.</p>', unsafe_allow_html=True)
 
-def add_log(message, level="info"):
+def add_batch_log(message, level="info"):
+    """Add log to batch processing state"""
     timestamp = time.strftime("%H:%M:%S", time.localtime())
     log_entry = (level, f"[{timestamp}] {message}")
-    st.session_state.logs.append(log_entry)
-    # Keep only last 50 logs to save memory
-    if len(st.session_state.logs) > 50:
-        st.session_state.logs = st.session_state.logs[-50:]
+    st.session_state.batch_processing_state['all_logs'].append(log_entry)
+    
+    # Keep only last 200 logs to save memory
+    if len(st.session_state.batch_processing_state['all_logs']) > 200:
+        st.session_state.batch_processing_state['all_logs'] = st.session_state.batch_processing_state['all_logs'][-200:]
 
 def get_amazon_product_details(asin, log_queue, processing_id, total_count, retail_price=None):
     """OPTIMIZED: Single attempt, no delays - Zyte handles everything"""
@@ -563,6 +640,7 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count, reta
     try:
         if not ZYTE_API_KEY:
             product_details['error'] = 'Zyte API key not configured'
+            add_batch_log(f"ASIN {asin}: Zyte API key not configured", "error")
             return product_details
         
         api_response = requests.post(
@@ -596,9 +674,11 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count, reta
                     product_details['image_url'] = largest_image
                     product_details['success'] = True
                     store_image_to_supabase(asin, largest_image, "amazon", retail_price)
+                    add_batch_log(f"ASIN {asin}: Successfully found image", "success")
                     return product_details
                 except Exception as e:
                     product_details['error'] = f'Image parse error: {str(e)}'
+                    add_batch_log(f"ASIN {asin}: Image parse error: {str(e)}", "error")
 
             if img_tag and img_tag.get("src"):
                 src_url = img_tag["src"]
@@ -608,26 +688,34 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count, reta
                 product_details['image_url'] = src_url
                 product_details['success'] = True
                 store_image_to_supabase(asin, src_url, "amazon", retail_price)
+                add_batch_log(f"ASIN {asin}: Successfully found fallback image", "success")
                 return product_details
         
         elif api_response.status_code == 422:
             error_detail = api_response.json().get('detail', 'Unknown error')
             product_details['error'] = f'Validation error: {error_detail}'
+            add_batch_log(f"ASIN {asin}: Validation error: {error_detail}", "error")
         elif api_response.status_code == 429:
             product_details['error'] = 'Rate limit exceeded'
+            add_batch_log(f"ASIN {asin}: Rate limit exceeded", "error")
         elif api_response.status_code == 503:
             product_details['error'] = 'Service unavailable (503)'
+            add_batch_log(f"ASIN {asin}: Service unavailable (503)", "error")
         elif api_response.status_code == 404:
             product_details['error'] = 'Product not found (404)'
+            add_batch_log(f"ASIN {asin}: Product not found (404)", "error")
         else:
             product_details['error'] = f'HTTP {api_response.status_code}'
+            add_batch_log(f"ASIN {asin}: HTTP {api_response.status_code}", "error")
     
     except Exception as e:
         product_details['error'] = str(e)[:100]
+        add_batch_log(f"ASIN {asin}: Exception: {str(e)[:100]}", "error")
     
     if not product_details['success']:
         if not product_details['error']:
             product_details['error'] = 'No image found'
+            add_batch_log(f"ASIN {asin}: No image found", "warning")
     
     return product_details
 
@@ -659,98 +747,276 @@ def detect_csv_type(df):
     
     return 'unknown'
 
-def process_amazon_data_batched(df, max_rows=None, batch_size=100):
-    """ULTRA-MINIMAL: Save to Supabase ONLY, no memory storage"""
-    
+def reset_batch_processing():
+    """Reset batch processing state"""
+    st.session_state.batch_processing_state = {
+        'is_active': False,
+        'current_batch': 0,
+        'total_batches': 0,
+        'asins_to_process': [],
+        'batch_size': 500,
+        'processed_count': 0,
+        'failed_count': 0,
+        'all_failed_asins': [],
+        'all_logs': [],
+        'start_time': None,
+        'df_data': None,
+        'retail_col': None
+    }
+
+def initialize_batch_processing(df, max_rows=None, batch_size=500):
+    """Initialize batch processing with data"""
     if max_rows is not None and max_rows > 0 and max_rows < len(df):
         df = df.head(max_rows)
     
     asin_col = next((col for col in df.columns if col.lower().strip() in ['asin', 'sku']), None)
     if not asin_col:
-        st.error("No ASIN/SKU column found")
-        return None
+        return False, "No ASIN/SKU column found"
 
     price_patterns = ['MSRP', 'msrp', 'EXT MSRP', 'Retail', 'retail', 'Price', 'price']
     retail_col = next((p for p in price_patterns if p in df.columns), None)
     if not retail_col:
         retail_col = next((c for c in df.columns if any(k in c.lower() for k in ['msrp', 'retail', 'price'])), None)
-    
-    if retail_col:
-        st.info(f"💰 Price column: '{retail_col}'")
 
     df = df.rename(columns={asin_col: 'Asin'})
-    unique_asins = df['Asin'].unique()
+    unique_asins = df['Asin'].unique().tolist()
     total_asins = len(unique_asins)
+    total_batches = (total_asins + batch_size - 1) // batch_size
     
-    num_batches = (total_asins + batch_size - 1) // batch_size
+    # Initialize batch processing state
+    st.session_state.batch_processing_state = {
+        'is_active': True,
+        'current_batch': 0,
+        'total_batches': total_batches,
+        'asins_to_process': unique_asins,
+        'batch_size': batch_size,
+        'processed_count': 0,
+        'failed_count': 0,
+        'all_failed_asins': [],
+        'all_logs': [],
+        'start_time': time.time(),
+        'df_data': df,
+        'retail_col': retail_col
+    }
     
-    st.success(f"🎯 {total_asins} ASINs → {num_batches} batches of {batch_size}")
+    return True, f"Initialized: {total_asins} ASINs in {total_batches} batches"
+
+def process_single_batch():
+    """Process one batch of 500 ASINs"""
+    state = st.session_state.batch_processing_state
     
+    if not state['is_active'] or state['current_batch'] >= state['total_batches']:
+        return False, "No more batches to process"
+    
+    # Get current batch ASINs
+    start_idx = state['current_batch'] * state['batch_size']
+    end_idx = min(start_idx + state['batch_size'], len(state['asins_to_process']))
+    batch_asins = state['asins_to_process'][start_idx:end_idx]
+    
+    batch_num = state['current_batch'] + 1
+    
+    # Create progress indicators
     progress_bar = st.progress(0)
     status = st.empty()
     
-    start_time = time.time()
-    success = 0
-    failed = 0
+    batch_start_time = time.time()
+    batch_success = 0
+    batch_failed = 0
     
-    for batch_num in range(num_batches):
-        start_idx = batch_num * batch_size
-        end_idx = min(start_idx + batch_size, total_asins)
-        batch_asins = unique_asins[start_idx:end_idx]
-        
-        status.text(f"📦 Batch {batch_num + 1}/{num_batches}")
-        
-        for i, asin in enumerate(batch_asins):
-            global_idx = start_idx + i + 1
-            
-            # Get price
-            retail_price = None
-            if retail_col:
-                asin_row = df[df['Asin'] == asin]
-                if not asin_row.empty and pd.notna(asin_row.iloc[0][retail_col]):
-                    try:
-                        retail_price = float(str(asin_row.iloc[0][retail_col]).replace('$', '').replace(',', '').replace('#', ''))
-                    except:
-                        pass
-            
-            # Process ASIN - saves to Supabase automatically
-            result = get_amazon_product_details(asin, queue.Queue(), global_idx, total_asins, retail_price)
-            
-            if result and result.get('success'):
-                success += 1
-            else:
-                failed += 1
-            
-            # Update progress
-            progress_bar.progress(global_idx / total_asins)
-            
-            elapsed = time.time() - start_time
-            rate = global_idx / elapsed if elapsed > 0 else 0
-            eta = (total_asins - global_idx) / rate if rate > 0 else 0
-            
-            status.text(
-                f"📦 Batch {batch_num + 1}/{num_batches} | "
-                f"{global_idx}/{total_asins} | "
-                f"✅{success} ❌{failed} | "
-                f"⚡{rate*60:.1f}/min | "
-                f"ETA:{eta/60:.1f}m"
-            )
-        
-        # CRITICAL: Clear memory after each batch
-        gc.collect()
-        
-        # Delete the processed rows from df to free memory
-        df = df[~df['Asin'].isin(batch_asins)]
+    status.text(f"🚀 Processing Batch {batch_num}/{state['total_batches']} ({len(batch_asins)} ASINs)")
     
+    # Process each ASIN in the batch
+    for i, asin in enumerate(batch_asins):
+        global_idx = start_idx + i + 1
+        
+        # Get price for this ASIN
+        retail_price = None
+        if state['retail_col'] and state['df_data'] is not None:
+            asin_row = state['df_data'][state['df_data']['Asin'] == asin]
+            if not asin_row.empty and pd.notna(asin_row.iloc[0][state['retail_col']]):
+                try:
+                    price_str = str(asin_row.iloc[0][state['retail_col']]).replace('$', '').replace(',', '').replace('#', '')
+                    retail_price = float(price_str)
+                except:
+                    pass
+        
+        # Process ASIN
+        result = get_amazon_product_details(asin, queue.Queue(), global_idx, len(state['asins_to_process']), retail_price)
+        
+        if result and result.get('success'):
+            batch_success += 1
+            state['processed_count'] += 1
+        else:
+            batch_failed += 1
+            state['failed_count'] += 1
+            state['all_failed_asins'].append(asin)
+        
+        # Update progress
+        progress = (i + 1) / len(batch_asins)
+        progress_bar.progress(progress)
+        
+        # Calculate timing
+        elapsed = time.time() - batch_start_time
+        rate = (i + 1) / elapsed if elapsed > 0 else 0
+        eta = (len(batch_asins) - (i + 1)) / rate if rate > 0 else 0
+        
+        # Update status
+        status.text(
+            f"📦 Batch {batch_num}/{state['total_batches']} | "
+            f"{i + 1}/{len(batch_asins)} | "
+            f"✅{batch_success} ❌{batch_failed} | "
+            f"⚡{rate*60:.1f}/min | "
+            f"ETA:{eta/60:.1f}m"
+        )
+    
+    # Complete batch
     progress_bar.progress(1.0)
-    status.empty()
+    batch_time = time.time() - batch_start_time
     
-    total_time = time.time() - start_time
-    st.success(f"🎉 DONE in {total_time/60:.1f} mins! ✅{success} ❌{failed}")
+    # Update state
+    state['current_batch'] += 1
     
-    # Load from Supabase (don't store anything)
+    # Clear memory
     gc.collect()
-    return None  # Don't return anything - view from Grid tab
+    
+    status.empty()
+    progress_bar.empty()
+    
+    return True, f"Batch {batch_num} completed in {batch_time/60:.1f} minutes: ✅{batch_success} ❌{batch_failed}"
+
+def render_batch_status():
+    """Render batch processing status and controls"""
+    state = st.session_state.batch_processing_state
+    
+    if not state['is_active']:
+        return
+    
+    # Calculate totals
+    total_processed = state['processed_count'] + state['failed_count']
+    total_asins = len(state['asins_to_process'])
+    overall_progress = total_processed / total_asins if total_asins > 0 else 0
+    
+    # Calculate timing
+    elapsed_time = time.time() - state['start_time'] if state['start_time'] else 0
+    rate = total_processed / elapsed_time if elapsed_time > 0 else 0
+    eta = (total_asins - total_processed) / rate if rate > 0 else 0
+    
+    # Display batch status
+    st.markdown(f"""
+    <div class="batch-status-container">
+        <div class="batch-status-title">
+            📊 Batch Processing Status
+        </div>
+        <div class="batch-stats">
+            <div class="batch-stat-item">
+                <div class="batch-stat-number">{state['current_batch']}/{state['total_batches']}</div>
+                <div class="batch-stat-label">BATCHES COMPLETED</div>
+            </div>
+            <div class="batch-stat-item">
+                <div class="batch-stat-number">{total_processed:,}</div>
+                <div class="batch-stat-label">TOTAL PROCESSED</div>
+            </div>
+            <div class="batch-stat-item">
+                <div class="batch-stat-number">{state['processed_count']:,}</div>
+                <div class="batch-stat-label">SUCCESSFUL</div>
+            </div>
+            <div class="batch-stat-item">
+                <div class="batch-stat-number">{state['failed_count']:,}</div>
+                <div class="batch-stat-label">FAILED</div>
+            </div>
+            <div class="batch-stat-item">
+                <div class="batch-stat-number">{rate*3600:.0f}</div>
+                <div class="batch-stat-label">ASINs/HOUR</div>
+            </div>
+            <div class="batch-stat-item">
+                <div class="batch-stat-number">{eta/3600:.1f}h</div>
+                <div class="batch-stat-label">ETA REMAINING</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Overall progress bar
+    st.progress(overall_progress, text=f"Overall Progress: {total_processed:,}/{total_asins:,} ASINs ({overall_progress*100:.1f}%)")
+    
+    # Control buttons
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        if state['current_batch'] < state['total_batches']:
+            next_batch_size = min(state['batch_size'], total_asins - total_processed)
+            if st.button(f"🚀 Process Next Batch ({next_batch_size} ASINs)", type="primary", key="process_next_batch"):
+                with st.spinner("Processing batch..."):
+                    success, message = process_single_batch()
+                    if success:
+                        st.success(message)
+                    else:
+                        st.error(message)
+                    st.rerun()
+        else:
+            st.success("✅ All batches completed!")
+    
+    with col2:
+        if st.button("📊 View Progress", key="view_progress"):
+            st.rerun()
+    
+    with col3:
+        if st.button("🗑️ Reset Processing", key="reset_processing", help="Reset and start over"):
+            reset_batch_processing()
+            st.success("Processing reset!")
+            st.rerun()
+    
+    with col4:
+        # Show download report button if there are failed ASINs
+        if state['all_failed_asins']:
+            if st.button(f"📥 Download Error Report ({len(state['all_failed_asins'])} failures)", key="download_error_report"):
+                error_report = generate_comprehensive_error_report(
+                    state['all_failed_asins'], 
+                    state['all_logs'], 
+                    state['df_data'], 
+                    state['retail_col']
+                )
+                
+                csv_data = error_report.to_csv(index=False)
+                st.download_button(
+                    label="💾 Save Error Report CSV",
+                    data=csv_data,
+                    file_name=f"failed_asins_report_{time.strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    key="download_error_csv"
+                )
+    
+    # Show recent failed ASINs if any
+    if state['all_failed_asins']:
+        recent_failed = state['all_failed_asins'][-20:]  # Show last 20 failed
+        if len(recent_failed) > 0:
+            with st.expander(f"❌ Recent Failed ASINs (Last {len(recent_failed)} of {len(state['all_failed_asins'])} total)", expanded=False):
+                cols = st.columns(5)
+                for i, asin in enumerate(recent_failed):
+                    with cols[i % 5]:
+                        st.code(asin)
+
+def process_amazon_data_batched(df, max_rows=None, batch_size=500):
+    """Initialize Amazon batch processing"""
+    success, message = initialize_batch_processing(df, max_rows, batch_size)
+    
+    if success:
+        st.success(message)
+        return "batch_initialized"
+    else:
+        st.error(message)
+        return None
+
+def add_log(message, level="info"):
+    """Legacy function for backwards compatibility"""
+    timestamp = time.strftime("%H:%M:%S", time.localtime())
+    log_entry = (level, f"[{timestamp}] {message}")
+    if 'logs' not in st.session_state:
+        st.session_state.logs = []
+    st.session_state.logs.append(log_entry)
+    # Keep only last 50 logs to save memory
+    if len(st.session_state.logs) > 50:
+        st.session_state.logs = st.session_state.logs[-50:]
 
 def process_direct_urls_data(df, max_rows=None):
     if max_rows is not None and max_rows > 0 and max_rows < len(df):
@@ -922,14 +1188,21 @@ def process_excel_format_data(df, max_rows=None):
     
     return enriched_df
 
-def process_csv_data(df, max_rows=None, batch_size=100):
+def process_csv_data(df, max_rows=None, batch_size=500):
     csv_type = detect_csv_type(df)
     
     if csv_type == 'amazon':
         if not any(col.lower() in ['asin', 'sku'] for col in df.columns):
             st.error("The CSV file must contain an 'Asin' column for Amazon products.")
             return None
-        return process_amazon_data_batched(df, max_rows, batch_size)  # ← NEW LINE
+        return process_amazon_data_batched(df, max_rows, batch_size)
+    elif csv_type == 'direct_urls':
+        return process_direct_urls_data(df, max_rows)
+    elif csv_type == 'excel_format':
+        return process_excel_format_data(df, max_rows)
+    else:
+        st.error("Unknown CSV format. Please ensure your file contains either ASINs or direct image URLs.")
+        return None
 
 def display_product_grid(df, search_term=None, min_price=None, max_price=None, sort_by=None):
     if df is None or df.empty:
@@ -1652,6 +1925,11 @@ def render_upload_tab():
     </div>
     """, unsafe_allow_html=True)
     
+    # Show batch processing status if active
+    if st.session_state.batch_processing_state['is_active']:
+        render_batch_status()
+        st.divider()
+    
     uploaded_file = st.file_uploader("", type=["csv", "xlsx", "xls"], key="main_csv_uploader")
     
     process_limit = st.number_input(
@@ -1713,26 +1991,28 @@ def render_upload_tab():
             if process_limit > 0 and process_limit < total_rows:
                 st.warning(f"You've chosen to process only {process_limit} rows out of {total_rows} total rows.")
             
-            batch_size = st.slider("Batch size (ASINs per batch):", 50, 200, 100, 25, help="Smaller = safer, Larger = faster")
+            # Only show batch size slider for Amazon CSVs
+            if csv_type == 'amazon':
+                batch_size = st.slider("Batch size (ASINs per batch):", 100, 500, 500, 50, help="500 = recommended for cloud timeout safety")
+            else:
+                batch_size = 100  # Default for non-Amazon
             
-            if st.button("🚀 Process in Batches (Memory-Safe)", key="process_button_unique", type="primary", help="Processes in batches to avoid memory issues"):
+            if st.button("🚀 Start Batch Processing", key="process_button_unique", type="primary", help="Process data in safe batches to avoid timeouts"):
                 if csv_type == 'unknown':
                     st.error("Could not detect file format. Please ensure your file contains either 'Asin' column for Amazon products or direct image URLs.")
                 else:
-                    with st.spinner("⚡ Processing at maximum speed..."):
-                        max_rows = process_limit if process_limit > 0 else None
-                        new_data = process_csv_data(df, max_rows, batch_size)
-                        
-                        if csv_type == 'amazon':
-                            # Don't store anything - processing already saved to Supabase
-                            st.success("✅ Processing complete! Go to 'Amazon Grid Images' tab to view results")
-                            st.info("💡 All images saved to Supabase - click 'Reload Amazon Images' in Grid tab")
-                        elif new_data is not None:
-                            # For Excel/Direct URLs (not using Supabase)
-                            st.session_state.processed_data = new_data
-                            st.success("✅ Data processed successfully! Check Excel Grid Images tab")
-                        else:
-                            st.error("❌ Failed to process data")
+                    max_rows = process_limit if process_limit > 0 else None
+                    result = process_csv_data(df, max_rows, batch_size)
+                    
+                    if result == "batch_initialized":
+                        st.success("✅ Batch processing initialized! Use the controls above to process batches.")
+                        st.rerun()
+                    elif result is not None:
+                        # For Excel/Direct URLs (not using batch processing)
+                        st.session_state.processed_data = result
+                        st.success("✅ Data processed successfully! Check Excel Grid Images tab")
+                    else:
+                        st.error("❌ Failed to process data")
         
         except Exception as e:
             st.error(f"Error reading the file: {str(e)}")
@@ -1777,7 +2057,7 @@ def main():
     st.markdown("""
     <div class="main-header">
         <h1>Universal <span class="accent-text">Image Viewer</span></h1>
-        <div class="subtitle">⚡ OPTIMIZED - No Delays - Zyte Handles Everything - Process 1000+ ASINs Fast!</div>
+        <div class="subtitle">⚡ BATCH PROCESSING - 500 ASINs per batch - Smart timeout protection!</div>
     </div>
     """, unsafe_allow_html=True)
     
@@ -1806,8 +2086,8 @@ def main():
     
     st.markdown("""
     <div class="footer">
-        <p>Universal Image Viewer App | Optimized for 1000+ ASINs | Support for Amazon ASINs & Direct Image URLs</p>
-        <p>⚡ Fast Mode: No unnecessary delays - Zyte API handles rate limiting & retries</p>
+        <p>Universal Image Viewer App | Batch Processing for 1000+ ASINs | Support for Amazon ASINs & Direct Image URLs</p>
+        <p>⚡ Safe Mode: 500 ASINs per batch with continue buttons - no more timeouts!</p>
     </div>
     """, unsafe_allow_html=True)
 
