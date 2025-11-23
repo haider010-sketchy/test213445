@@ -123,8 +123,6 @@ def load_stored_images_from_supabase(source_filter="amazon"):
         supabase = get_supabase_client()
         result = supabase.table('product_images').select('*').eq('source_type', source_filter).order('retail_price', desc=True, nullsfirst=False).execute()
         
-        print(f"DEBUG: Query result count: {len(result.data) if result.data else 0}")
-        print(f"DEBUG: Result data: {result.data[:2] if result.data else 'None'}")
         if result.data:
             stored_data = []
             for item in result.data:
@@ -219,8 +217,13 @@ def generate_error_report(df, failed_asins, logs):
         # Get retail price if available
         retail_price = ""
         if asin_row is not None:
-            retail_columns = ['Retail', 'retail', 'Price', 'price', 'Cost', 'cost']
-            for col in retail_columns:
+            price_column_patterns = [
+                'MSRP', 'msrp', 'EXT MSRP', 'ext msrp', 'Ext MSRP',
+                'Retail', 'retail', 'RETAIL',
+                'Price', 'price', 'PRICE',
+                'Cost', 'cost', 'COST',
+            ]
+            for col in price_column_patterns:
                 if col in df.columns and pd.notna(asin_row[col]):
                     retail_price = str(asin_row[col])
                     break
@@ -299,7 +302,6 @@ def add_custom_css():
         --body-font: 'Helvetica Neue', Helvetica, Arial, sans-serif;
     }
 
-    /* FIX: Expander styling - prevent white background on hover */
     div[data-testid="stExpander"] {
         background-color: #1e1e1e !important;
         border: 1px solid #333333 !important;
@@ -311,7 +313,6 @@ def add_custom_css():
         border-color: #4a4a4a !important;
     }
     
-    /* FIX: Expander header */
     div[data-testid="stExpander"] summary {
         background-color: #1e1e1e !important;
         color: white !important;
@@ -325,14 +326,12 @@ def add_custom_css():
         color: white !important;
     }
     
-    /* FIX: Expander content area */
     div[data-testid="stExpander"] > div[role="region"] {
         background-color: #1e1e1e !important;
         border-top: 1px solid #333333 !important;
         padding: 0 !important;
     }
     
-    /* FIX: Progress bar styling */
     div[data-testid="stProgress"] > div {
         background-color: #e0e0e0 !important;
         border-radius: 10px !important;
@@ -344,7 +343,6 @@ def add_custom_css():
         border-radius: 10px !important;
     }
     
-    /* FIX: Status text visibility */
     .stMarkdown p {
         color: #232F3E !important;
     }
@@ -413,142 +411,6 @@ def add_custom_css():
         font-size: 1.5rem;
     }
 
-    .password-input {
-        padding: 8px;
-        font-size: 14px;
-        width: 100%;
-        border: 2px solid #ccc;
-        border-radius: 5px;
-        margin-bottom: 10px;
-    }
-
-    .password-button {
-        background-color: var(--accent-color);
-        color: white;
-        font-weight: 600;
-        padding: 8px 16px;
-        border-radius: 5px;
-        border: none;
-        cursor: pointer;
-        transition: all 0.2s ease;
-    }
-
-    .password-button:hover {
-        background-color: #e68a00;
-        transform: translateY(-2px);
-    }
-
-    .error-message {
-        color: #d9534f;
-        font-size: 12px;
-        margin-top: 8px;
-        text-align: center;
-    }
-
-    .fullscreen-gallery-container {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background-color: #1e1e1e;
-        z-index: 9999;
-        overflow: hidden;
-    }
-
-    .fullscreen-gallery-grid {
-        display: grid;
-        grid-template-columns: repeat(7, 1fr);
-        gap: 8px;
-        padding: 10px;
-        overflow-y: auto;
-        height: 100vh;
-        box-sizing: border-box;
-    }
-
-    .fullscreen-gallery-item {
-        aspect-ratio: 1;
-        background-color: white;
-        border-radius: 4px;
-        overflow: hidden;
-        position: relative;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-        transition: transform 0.2s ease;
-    }
-
-    .fullscreen-gallery-item:hover {
-        transform: scale(1.05);
-        z-index: 100;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-    }
-
-    .fullscreen-gallery-item img {
-        width: 100%;
-        height: 100%;
-        object-fit: contain;
-        background-color: white;
-    }
-
-    .fullscreen-controls {
-        position: fixed;
-        top: 15px;
-        right: 15px;
-        display: flex;
-        gap: 10px;
-        z-index: 10000;
-    }
-
-    .fullscreen-exit-button {
-        background-color: rgba(0,0,0,0.7);
-        color: white;
-        border: none;
-        border-radius: 50%;
-        width: 40px;
-        height: 40px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        font-size: 18px;
-        transition: all 0.2s ease;
-    }
-
-    .fullscreen-exit-button:hover {
-        background-color: rgba(255,0,0,0.8);
-        transform: scale(1.1);
-    }
-
-    .image-tooltip {
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        width: 100%;
-        background-color: rgba(0,0,0,0.7);
-        color: white;
-        padding: 4px 8px;
-        font-size: 12px;
-        opacity: 0;
-        transition: opacity 0.3s;
-        text-align: center;
-        border-radius: 0 0 4px 4px;
-    }
-
-    .fullscreen-gallery-item:hover .image-tooltip {
-        opacity: 1;
-    }
-
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(10px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-
-    .fullscreen-gallery-item {
-        animation: fadeIn 0.3s ease forwards;
-        animation-delay: calc(var(--item-index) * 0.02s);
-        opacity: 0;
-    }
-    
     .accent-text {
         color: var(--accent-color);
     }
@@ -597,71 +459,28 @@ def add_custom_css():
         margin: 5px 0;
     }
     
-    .custom-button {
-        background-color: var(--accent-color);
+    .price-overlay {
+        position: absolute;
+        top: 5px;
+        right: 5px;
+        background-color: rgba(0,0,0,0.8);
         color: white;
-        font-weight: 600;
-        padding: 10px 20px;
-        border-radius: 5px;
-        border: none;
-        cursor: pointer;
-        transition: all 0.2s ease;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 11px;
+        font-weight: bold;
     }
     
-    .custom-button:hover {
-        background-color: #e68a00;
-        transform: translateY(-2px);
-    }
-    
-    .loading-container {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        padding: 30px 0;
-    }
-    
-    .loading-spinner {
-        border: 5px solid #f3f3f3;
-        border-top: 5px solid var(--accent-color);
-        border-radius: 50%;
-        width: 40px;
-        height: 40px;
-        animation: spin 1s linear infinite;
-        margin-bottom: 15px;
-    }
-    
-    @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-    }
-    
-    .stats-container {
-        display: flex;
-        justify-content: space-between;
-        margin-bottom: 15px;
-    }
-    
-    .stat-card {
-        background-color: white;
-        border-radius: 10px;
-        padding: 12px;
-        flex: 1;
-        margin: 0 8px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-        text-align: center;
-    }
-    
-    .stat-value {
-        font-size: 1.6rem;
-        font-weight: 700;
-        color: var(--primary-color);
-        margin-bottom: 4px;
-    }
-    
-    .stat-label {
-        font-size: 0.85rem;
-        color: #777;
+    .price-overlay-fullscreen {
+        position: absolute;
+        top: 5px;
+        right: 5px;
+        background-color: rgba(0,0,0,0.8);
+        color: white;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 9px;
+        font-weight: bold;
     }
     
     .footer {
@@ -683,39 +502,6 @@ def add_custom_css():
         font-size: 0.9em;
         white-space: pre-wrap;
         word-break: break-word;
-    }
-
-    .log-container {
-        background-color: #1e1e1e;
-        color: #dcdcdc;
-        font-family: 'Courier New', monospace;
-        padding: 12px;
-        border-radius: 5px;
-        margin: 10px 0;
-        max-height: 300px;
-        overflow-y: auto;
-    }
-    
-    .log-entry {
-        margin: 4px 0;
-        white-space: pre-wrap;
-        line-height: 1.4;
-    }
-    
-    .log-info {
-        color: #6a9955;
-    }
-    
-    .log-warning {
-        color: #dcdcaa;
-    }
-    
-    .log-error {
-        color: #f14c4c;
-    }
-    
-    .log-success {
-        color: #4ec9b0;
     }
     
     .failed-asin-list {
@@ -747,97 +533,6 @@ def add_custom_css():
         display: inline-block;
         margin-right: 5px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-    }
-    
-    .processing-indicator {
-        position: fixed;
-        bottom: 20px;
-        right: 20px;
-        background-color: rgba(0,0,0,0.8);
-        color: white;
-        padding: 10px 15px;
-        border-radius: 5px;
-        z-index: 1000;
-        font-size: 0.9rem;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-    }
-    
-    .processing-id {
-        font-weight: bold;
-        color: #4ec9b0;
-    }
-    
-    .processing-total {
-        font-weight: bold;
-        color: #dcdcaa;
-    }
-    
-    .image-grid {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 2px;
-        align-items: stretch;
-    }
-
-    .grid-item {
-        flex: 1 0 150px;
-        height: 150px;
-        overflow: hidden;
-        margin: 1px;
-    }
-
-    .grid-item img {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-    }
-    
-    .scrollable-container {
-        height: 800px;
-        overflow-y: auto;
-        padding: 5px;
-        background-color: #f0f0f0;
-        border-radius: 5px;
-    }
-    
-    .price-overlay {
-        position: absolute;
-        top: 5px;
-        right: 5px;
-        background-color: rgba(0,0,0,0.8);
-        color: white;
-        padding: 2px 6px;
-        border-radius: 3px;
-        font-size: 11px;
-        font-weight: bold;
-    }
-    
-    .price-overlay-fullscreen {
-        position: absolute;
-        top: 5px;
-        right: 5px;
-        background-color: rgba(0,0,0,0.8);
-        color: white;
-        padding: 2px 6px;
-        border-radius: 3px;
-        font-size: 9px;
-        font-weight: bold;
-    }
-    
-    .error-report-panel {
-        background-color: #fff3cd;
-        border-left: 5px solid #ffc107;
-        padding: 15px;
-        margin: 15px 0;
-        border-radius: 5px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    
-    .error-report-title {
-        color: #000000;
-        font-weight: bold;
-        font-size: 18px;
-        margin-bottom: 10px;
     }
 
     @media (max-width: 768px) {
@@ -885,27 +580,9 @@ def add_log(message, level="info"):
     log_entry = (level, f"[{timestamp}] {message}")
     st.session_state.logs.append(log_entry)
 
-def display_logs(log_container):
-    log_display = '<div class="log-container">\n'
-    
-    for entry in st.session_state.logs:
-        try:
-            if isinstance(entry, tuple) and len(entry) == 2:
-                level, message = entry
-                log_display += f'<div class="log-{level}">{message}</div>\n'
-            else:
-                log_display += f'<div class="log-error">Invalid log entry: {str(entry)}</div>\n'
-        except Exception as e:
-            log_display += f'<div class="log-error">Error displaying log entry: {str(e)}</div>\n'
-    
-    log_display += '</div>'
-    log_container.markdown(log_display, unsafe_allow_html=True)
-
 def get_amazon_product_details(asin, log_queue, processing_id, total_count, retail_price=None):
     st.session_state.current_processing_id = processing_id
     st.session_state.total_processing_count = total_count
-    
-    log_queue.put(('info', f'Starting to process ASIN: {asin} ({processing_id}/{total_count})'))
     
     product_details = {
         'asin': asin,
@@ -918,20 +595,14 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count, reta
     for attempt in range(3):
         url = f"https://www.amazon.com/dp/{asin}"
         
-        log_queue.put(('info', f'ASIN {asin}: Attempt {attempt+1}/3 started'))
-        
         if attempt > 0:
             sleep_time = 2 + random.uniform(1, 3)
-            log_queue.put(('info', f'ASIN {asin}: Waiting {sleep_time:.2f} seconds before retry'))
             time.sleep(sleep_time)
         
         try:
             if not ZYTE_API_KEY:
-                log_queue.put(('error', f'ASIN {asin}: Zyte API key not found in environment variables'))
                 product_details['error'] = 'Zyte API key not configured'
                 return product_details
-            
-            log_queue.put(('info', f'ASIN {asin}: Making Zyte API request'))
             
             api_response = requests.post(
                 "https://api.zyte.com/v1/extract",
@@ -944,40 +615,15 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count, reta
                 timeout=60
             )
             
-            log_queue.put(('info', f'ASIN {asin}: Zyte API Status Code: {api_response.status_code} on attempt {attempt+1}'))
-            
             if api_response.status_code == 200:
                 response_data = api_response.json()
                 
                 http_response_body = base64.b64decode(response_data["httpResponseBody"])
                 resp_text = http_response_body.decode('utf-8', errors='ignore')
                 
-                log_queue.put(('info', f'ASIN {asin}: Response size: {len(resp_text)} bytes'))
-                
                 soup = BeautifulSoup(resp_text, 'html.parser')
-                page_title = soup.title.string if soup.title else "No title found"
-                log_queue.put(('info', f'ASIN {asin}: Page title: "{page_title}"'))
-                
-                if "robot" in resp_text.lower() or "captcha" in resp_text.lower():
-                    log_queue.put(('warning', f'ASIN {asin}: Bot detection page detected on attempt {attempt+1}'))
-                
-                if "does not exist" in resp_text.lower() or "page not found" in resp_text.lower():
-                    log_queue.put(('error', f'ASIN {asin}: Product not found on attempt {attempt+1}'))
-                
-                log_queue.put(('success', f'ASIN {asin}: Retrieved page on attempt {attempt+1}'))
-                
-                all_images = soup.find_all("img")
-                log_queue.put(('info', f'ASIN {asin}: Found {len(all_images)} total images on page'))
                 
                 img_tag = soup.find("img", {"id": "landingImage"})
-                if img_tag:
-                    log_queue.put(('info', f'ASIN {asin}: Found landingImage element'))
-                    if img_tag.get("data-a-dynamic-image"):
-                        log_queue.put(('info', f'ASIN {asin}: landingImage has data-a-dynamic-image'))
-                    if img_tag.get("src"):
-                        log_queue.put(('info', f'ASIN {asin}: landingImage has src attribute'))
-                else:
-                    log_queue.put(('warning', f'ASIN {asin}: No landingImage element found'))
                 
                 if img_tag and img_tag.get("data-a-dynamic-image"):
                     try:
@@ -991,13 +637,12 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count, reta
                         
                         product_details['image_url'] = largest_image
                         product_details['success'] = True
-                        log_queue.put(('success', f'ASIN {asin}: Found image on attempt {attempt+1}'))
                         
                         store_image_to_supabase(asin, largest_image, "amazon", retail_price)
                         
                         return product_details
                     except Exception as e:
-                        log_queue.put(('error', f'ASIN {asin}: Error parsing dynamic image data: {str(e)}'))
+                        product_details['error'] = f'Image parse error: {str(e)}'
 
                 if img_tag and img_tag.get("src"):
                     src_url = img_tag["src"]
@@ -1006,32 +651,29 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count, reta
                         src_url = base_url + "._AC_SL1500_.jpg"
                     product_details['image_url'] = src_url
                     product_details['success'] = True
-                    log_queue.put(('success', f'ASIN {asin}: Found image on attempt {attempt+1}'))
                     
                     store_image_to_supabase(asin, src_url, "amazon", retail_price)
                     
                     return product_details
-                
-                log_queue.put(('warning', f'ASIN {asin}: No image found on attempt {attempt+1}. Will retry.'))
             
             elif api_response.status_code == 422:
                 error_detail = api_response.json().get('detail', 'Unknown error')
-                log_queue.put(('error', f'ASIN {asin}: Zyte API validation error: {error_detail}'))
+                product_details['error'] = f'Validation error: {error_detail}'
             elif api_response.status_code == 429:
-                log_queue.put(('warning', f'ASIN {asin}: Zyte API rate limit exceeded'))
+                product_details['error'] = 'Rate limit exceeded'
             elif api_response.status_code == 503:
-                log_queue.put(('warning', f'ASIN {asin}: Zyte API service unavailable (503)'))
+                product_details['error'] = 'Service unavailable (503)'
             elif api_response.status_code == 404:
-                log_queue.put(('error', f'ASIN {asin}: Product not found (404)'))
+                product_details['error'] = 'Product not found (404)'
             else:
-                log_queue.put(('error', f'ASIN {asin}: Zyte API error {api_response.status_code}: {api_response.text}'))
+                product_details['error'] = f'HTTP {api_response.status_code}'
         
         except Exception as e:
-            log_queue.put(('error', f'ASIN {asin}: Error on attempt {attempt+1}: {str(e)}'))
+            product_details['error'] = str(e)[:100]  # Truncate long errors
     
     if not product_details['success']:
-        log_queue.put(('error', f'ASIN {asin}: Failed after 3 attempts'))
-        product_details['error'] = 'Failed to retrieve product data after 3 attempts'
+        if not product_details['error']:
+            product_details['error'] = 'Failed after 3 attempts'
     
     return product_details
 
@@ -1117,11 +759,7 @@ def process_amazon_data(df, max_rows=None):
     
     progress_bar = st.progress(0)
     status_text = st.empty()
-    processing_status = st.empty()
-    log_expander = st.expander("Processing Log (Live)", expanded=True)
-    log_container = log_expander.empty()
-    
-    log_container.markdown('<div class="log-container">', unsafe_allow_html=True)
+    current_status = st.empty()
     
     unique_asins = df_copy['Asin'].unique()
     total_asins = len(unique_asins)
@@ -1163,8 +801,20 @@ def process_amazon_data(df, max_rows=None):
                         except:
                             retail_price = str(price_value)
             
+            # Update current status before processing
+            current_status.text(f"🔄 Processing: {asin} ({processing_id}/{total_asins})...")
+            
             product_details = get_amazon_product_details(asin, batch_log_queue, processing_id, total_asins, retail_price)
             product_details_dict[asin] = product_details
+            
+            # Update status based on result
+            if product_details['success'] and product_details['image_url']:
+                current_status.text(f"✅ {asin} - Status 200 - Image found")
+            elif product_details.get('error'):
+                error_msg = product_details['error'][:50]  # Truncate long errors
+                current_status.text(f"❌ {asin} - Error: {error_msg}")
+            else:
+                current_status.text(f"⚠️ {asin} - No image found")
             
             if not product_details['success'] or not product_details['image_url']:
                 st.session_state.failed_asins.append(asin)
@@ -1186,24 +836,12 @@ def process_amazon_data(df, max_rows=None):
         progress_bar.progress(progress)
         status_text.text(f"Processing batch {i//batch_size + 1} of {(len(unique_asins) + batch_size - 1) // batch_size}")
         
-        processing_status.markdown(f"""
-        <div class="processing-indicator">
-            Processing ID: <span class="processing-id">{i+1}</span> / <span class="processing-total">{len(unique_asins)}</span>
-        </div>
-        """, unsafe_allow_html=True)
-        
         batch_results = process_batch(batch_asins, i)
         all_product_details.update(batch_results)
         
         while not log_queue.empty():
             level, message = log_queue.get()
             st.session_state.logs.append((level, message))
-        
-        log_display = '<div class="log-container">\n'
-        for level, message in st.session_state.logs:
-            log_display += f'<div class="log-{level}">{message}</div>\n'
-        log_display += '</div>'
-        log_container.markdown(log_display, unsafe_allow_html=True)
         
         progress = (i + len(batch_asins)) / len(unique_asins)
         progress_bar.progress(progress)
@@ -1237,7 +875,7 @@ def process_amazon_data(df, max_rows=None):
     
     progress_bar.progress(1.0)
     status_text.empty()
-    processing_status.empty()
+    current_status.empty()
     
     success_count = len(enriched_df[enriched_df['Fetch_Success'] == True])
     failed_count = len(st.session_state.failed_asins)
@@ -1256,8 +894,6 @@ def process_amazon_data(df, max_rows=None):
         st.metric("📊 Success Rate", f"{success_rate:.1f}%", help="Percentage of successful retrievals")
     
     if st.session_state.failed_asins:
-    
-        
         for failed_asin in st.session_state.failed_asins[:20]:
             st.markdown(f'<span class="failed-asin-item">{failed_asin}</span>', unsafe_allow_html=True)
         
@@ -1310,8 +946,6 @@ def process_direct_urls_data(df, max_rows=None):
     
     progress_bar = st.progress(0)
     status_text = st.empty()
-    log_expander = st.expander("Processing Log (Live)", expanded=True)
-    log_container = log_expander.empty()
     
     total_rows = len(df)
     status_text.text(f"Processing {total_rows} image URLs...")
@@ -1357,13 +991,6 @@ def process_direct_urls_data(df, max_rows=None):
             add_log(f"Found image URL for Listing ID: {listing_id}", "success")
         
         enriched_data.append(new_row)
-        
-        log_display = '<div class="log-container">\n'
-        for level, message in st.session_state.logs:
-            log_display += f'<div class="log-{level}">{message}</div>\n'
-        log_display += '</div>'
-        log_container.markdown(log_display, unsafe_allow_html=True)
-        
         time.sleep(0.05)
     
     enriched_df = pd.DataFrame(enriched_data)
@@ -1398,8 +1025,6 @@ def process_excel_format_data(df, max_rows=None):
     
     progress_bar = st.progress(0)
     status_text = st.empty()
-    log_expander = st.expander("Processing Log (Live)", expanded=True)
-    log_container = log_expander.empty()
     
     listing_id_col = None
     url_col = None
@@ -1455,13 +1080,6 @@ def process_excel_format_data(df, max_rows=None):
             add_log(f"Valid image URL found for Listing ID: {listing_id}", "success")
         
         enriched_data.append(new_row)
-        
-        log_display = '<div class="log-container">\n'
-        for level, message in st.session_state.logs:
-            log_display += f'<div class="log-{level}">{message}</div>\n'
-        log_display += '</div>'
-        log_container.markdown(log_display, unsafe_allow_html=True)
-        
         time.sleep(0.1)
         
     enriched_df = pd.DataFrame(enriched_data)
@@ -1487,11 +1105,6 @@ def process_excel_format_data(df, max_rows=None):
         st.markdown('</div></div>', unsafe_allow_html=True)
     
     add_log(f"Processing complete! Processed {len(enriched_data)} items", "success")
-    log_display = '<div class="log-container">\n'
-    for level, message in st.session_state.logs:
-        log_display += f'<div class="log-{level}">{message}</div>\n'
-    log_display += '</div>'
-    log_container.markdown(log_display, unsafe_allow_html=True)
     
     return enriched_df
 
@@ -1518,17 +1131,35 @@ def display_product_grid(df, search_term=None, min_price=None, max_price=None, s
         
     filtered_df = df.copy()
     
-    retail_columns = ['Retail', 'retail', 'Price', 'price', 'Cost', 'cost']
+    # Intelligent price column detection - prioritized list
+    price_column_patterns = [
+        'MSRP', 'msrp', 'EXT MSRP', 'ext msrp', 'Ext MSRP',
+        'Retail', 'retail', 'RETAIL',
+        'Price', 'price', 'PRICE',
+        'Cost', 'cost', 'COST',
+        'List Price', 'list price', 'LIST PRICE',
+        'Unit Price', 'unit price', 'UNIT PRICE',
+    ]
+    
     retail_col = None
     
-    for col in retail_columns:
-        if col in filtered_df.columns:
-            retail_col = col
+    # First, try exact matches in priority order
+    for pattern in price_column_patterns:
+        if pattern in filtered_df.columns:
+            retail_col = pattern
             break
+    
+    # If no exact match, try partial matches (contains)
+    if not retail_col:
+        for col in filtered_df.columns:
+            col_lower = col.lower().strip()
+            if any(keyword in col_lower for keyword in ['msrp', 'retail', 'price', 'cost']):
+                retail_col = col
+                break
     
     if retail_col:
         try:
-            filtered_df[f'{retail_col}_numeric'] = filtered_df[retail_col].astype(str).str.replace('$', '').str.replace(',', '').str.replace('#', '')
+            filtered_df[f'{retail_col}_numeric'] = filtered_df[retail_col].astype(str).str.replace('$'  , '').str.replace(',', '').str.replace('#', '')
             filtered_df[f'{retail_col}_numeric'] = pd.to_numeric(filtered_df[f'{retail_col}_numeric'], errors='coerce')
             
             filtered_df = filtered_df.sort_values(by=f'{retail_col}_numeric', ascending=False, na_position='last')
@@ -1636,13 +1267,31 @@ def display_fullscreen_grid(df, search_term=None, min_price=None, max_price=None
         
     filtered_df = df.copy()
     
-    retail_columns = ['Retail', 'retail', 'Price', 'price', 'Cost', 'cost']
+    # Intelligent price column detection - prioritized list
+    price_column_patterns = [
+        'MSRP', 'msrp', 'EXT MSRP', 'ext msrp', 'Ext MSRP',
+        'Retail', 'retail', 'RETAIL',
+        'Price', 'price', 'PRICE',
+        'Cost', 'cost', 'COST',
+        'List Price', 'list price', 'LIST PRICE',
+        'Unit Price', 'unit price', 'UNIT PRICE',
+    ]
+    
     retail_col = None
     
-    for col in retail_columns:
-        if col in filtered_df.columns:
-            retail_col = col
+    # First, try exact matches in priority order
+    for pattern in price_column_patterns:
+        if pattern in filtered_df.columns:
+            retail_col = pattern
             break
+    
+    # If no exact match, try partial matches (contains)
+    if not retail_col:
+        for col in filtered_df.columns:
+            col_lower = col.lower().strip()
+            if any(keyword in col_lower for keyword in ['msrp', 'retail', 'price', 'cost']):
+                retail_col = col
+                break
     
     if retail_col:
         try:
