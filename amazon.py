@@ -660,33 +660,20 @@ def detect_csv_type(df):
     return 'unknown'
 
 def process_amazon_data_batched(df, max_rows=None, batch_size=100):
-    """BATCH PROCESSING: Process in chunks, clear memory after each"""
+    """ULTRA-MINIMAL: Save to Supabase ONLY, no memory storage"""
     
     if max_rows is not None and max_rows > 0 and max_rows < len(df):
         df = df.head(max_rows)
     
-    asin_col = None
-    for col in df.columns:
-        if col.lower().strip() in ['asin', 'sku']:
-            asin_col = col
-            break
-
+    asin_col = next((col for col in df.columns if col.lower().strip() in ['asin', 'sku']), None)
     if not asin_col:
-        st.error(f"No ASIN/SKU column found")
+        st.error("No ASIN/SKU column found")
         return None
 
-    price_patterns = ['MSRP', 'msrp', 'EXT MSRP', 'Retail', 'retail', 'Price', 'price', 'Cost', 'cost']
-    retail_col = None
-    for pattern in price_patterns:
-        if pattern in df.columns:
-            retail_col = pattern
-            break
-    
+    price_patterns = ['MSRP', 'msrp', 'EXT MSRP', 'Retail', 'retail', 'Price', 'price']
+    retail_col = next((p for p in price_patterns if p in df.columns), None)
     if not retail_col:
-        for col in df.columns:
-            if any(k in col.lower() for k in ['msrp', 'retail', 'price', 'cost']):
-                retail_col = col
-                break
+        retail_col = next((c for c in df.columns if any(k in c.lower() for k in ['msrp', 'retail', 'price'])), None)
     
     if retail_col:
         st.info(f"💰 Price column: '{retail_col}'")
@@ -697,93 +684,73 @@ def process_amazon_data_batched(df, max_rows=None, batch_size=100):
     
     num_batches = (total_asins + batch_size - 1) // batch_size
     
-    st.success(f"🎯 BATCH MODE: {total_asins} ASINs → {num_batches} batches of {batch_size}")
-    st.info("💡 Memory-safe: Each batch clears memory")
+    st.success(f"🎯 {total_asins} ASINs → {num_batches} batches of {batch_size}")
     
     progress_bar = st.progress(0)
-    status_text = st.empty()
-    current_status = st.empty()
+    status = st.empty()
     
     start_time = time.time()
-    total_success = 0
-    total_failed = 0
-    failed_list = []
+    success = 0
+    failed = 0
     
-    # Process each batch
     for batch_num in range(num_batches):
         start_idx = batch_num * batch_size
         end_idx = min(start_idx + batch_size, total_asins)
         batch_asins = unique_asins[start_idx:end_idx]
         
-        st.markdown(f"### 📦 Batch {batch_num + 1}/{num_batches} ({len(batch_asins)} ASINs)")
-        batch_progress = st.progress(0)
+        status.text(f"📦 Batch {batch_num + 1}/{num_batches}")
         
         for i, asin in enumerate(batch_asins):
             global_idx = start_idx + i + 1
-            current_status.text(f"🔄 {asin} ({global_idx}/{total_asins})")
             
+            # Get price
             retail_price = None
             if retail_col:
                 asin_row = df[df['Asin'] == asin]
-                if not asin_row.empty:
-                    pv = asin_row.iloc[0][retail_col]
-                    if pd.notna(pv):
-                        retail_price = str(pv).replace('$', '').replace(',', '').replace('#', '')
-                        try:
-                            retail_price = float(retail_price)
-                        except:
-                            retail_price = str(pv)
+                if not asin_row.empty and pd.notna(asin_row.iloc[0][retail_col]):
+                    try:
+                        retail_price = float(str(asin_row.iloc[0][retail_col]).replace('$', '').replace(',', '').replace('#', ''))
+                    except:
+                        pass
             
+            # Process ASIN - saves to Supabase automatically
             result = get_amazon_product_details(asin, queue.Queue(), global_idx, total_asins, retail_price)
             
             if result and result.get('success'):
-                total_success += 1
-                current_status.text(f"✅ {asin} - Saved!")
+                success += 1
             else:
-                total_failed += 1
-                failed_list.append(asin)
-                current_status.text(f"❌ {asin} - Failed")
+                failed += 1
             
-            batch_progress.progress((i + 1) / len(batch_asins))
+            # Update progress
             progress_bar.progress(global_idx / total_asins)
             
             elapsed = time.time() - start_time
             rate = global_idx / elapsed if elapsed > 0 else 0
             eta = (total_asins - global_idx) / rate if rate > 0 else 0
             
-            status_text.text(
-                f"📊 {global_idx}/{total_asins} | "
-                f"✅{total_success} ❌{total_failed} | "
-                f"⚡{rate*60:.1f}/min | ETA:{eta/60:.1f}m"
+            status.text(
+                f"📦 Batch {batch_num + 1}/{num_batches} | "
+                f"{global_idx}/{total_asins} | "
+                f"✅{success} ❌{failed} | "
+                f"⚡{rate*60:.1f}/min | "
+                f"ETA:{eta/60:.1f}m"
             )
         
-        st.success(f"✅ Batch {batch_num + 1} done")
-        gc.collect()  # CLEAR MEMORY
-        batch_progress.empty()
+        # CRITICAL: Clear memory after each batch
+        gc.collect()
+        
+        # Delete the processed rows from df to free memory
+        df = df[~df['Asin'].isin(batch_asins)]
     
     progress_bar.progress(1.0)
-    status_text.empty()
-    current_status.empty()
+    status.empty()
     
     total_time = time.time() - start_time
+    st.success(f"🎉 DONE in {total_time/60:.1f} mins! ✅{success} ❌{failed}")
     
-    st.markdown("---")
-    st.success(f"🎉 COMPLETE in {total_time/60:.1f} mins!")
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("✅ Success", total_success)
-    col2.metric("❌ Failed", total_failed)
-    col3.metric("📊 Rate", f"{(total_success/total_asins*100):.1f}%")
-    
-    if failed_list:
-        with st.expander(f"❌ Failed ({len(failed_list)})", expanded=False):
-            for fa in failed_list[:50]:
-                st.text(fa)
-            if len(failed_list) > 50:
-                st.text(f"...+{len(failed_list)-50} more")
-    
+    # Load from Supabase (don't store anything)
     gc.collect()
-    return load_stored_images_from_supabase("amazon")
+    return None  # Don't return anything - view from Grid tab
 
 def process_direct_urls_data(df, max_rows=None):
     if max_rows is not None and max_rows > 0 and max_rows < len(df):
@@ -1756,15 +1723,16 @@ def render_upload_tab():
                         max_rows = process_limit if process_limit > 0 else None
                         new_data = process_csv_data(df, max_rows, batch_size)
                         
-                        if new_data is not None:
-                            if csv_type == 'amazon':
-                                st.session_state.processed_data = combine_stored_and_new_images(new_data, "amazon")
-                                st.success("✅ Amazon data processed successfully! Check Amazon Grid Images tab to view all Amazon images (stored + new).")
-                            else:
-                                st.session_state.processed_data = new_data
-                                st.success("✅ Data processed successfully! Check Excel Grid Images tab to view images (temporary, not stored).")
+                        if csv_type == 'amazon':
+                            # Don't store anything - processing already saved to Supabase
+                            st.success("✅ Processing complete! Go to 'Amazon Grid Images' tab to view results")
+                            st.info("💡 All images saved to Supabase - click 'Reload Amazon Images' in Grid tab")
+                        elif new_data is not None:
+                            # For Excel/Direct URLs (not using Supabase)
+                            st.session_state.processed_data = new_data
+                            st.success("✅ Data processed successfully! Check Excel Grid Images tab")
                         else:
-                            st.error("❌ Failed to process data. Please check your file format.")
+                            st.error("❌ Failed to process data")
         
         except Exception as e:
             st.error(f"Error reading the file: {str(e)}")
