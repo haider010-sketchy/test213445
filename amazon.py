@@ -659,8 +659,9 @@ def detect_csv_type(df):
     
     return 'unknown'
 
-def process_amazon_data(df, max_rows=None):
-    """OPTIMIZED: Fast processing with live speed tracking"""
+def process_amazon_data_batched(df, max_rows=None, batch_size=100):
+    """BATCH PROCESSING: Process in chunks, clear memory after each"""
+    
     if max_rows is not None and max_rows > 0 and max_rows < len(df):
         df = df.head(max_rows)
     
@@ -671,246 +672,118 @@ def process_amazon_data(df, max_rows=None):
             break
 
     if not asin_col:
-        st.error(f"No ASIN/SKU column found. Available columns: {list(df.columns)}")
+        st.error(f"No ASIN/SKU column found")
         return None
 
-    price_column_patterns = [
-        'MSRP', 'msrp', 'EXT MSRP', 'ext msrp', 'Ext MSRP',
-        'Retail', 'retail', 'RETAIL',
-        'Price', 'price', 'PRICE',
-        'Cost', 'cost', 'COST',
-        'List Price', 'list price', 'LIST PRICE',
-        'Unit Price', 'unit price', 'UNIT PRICE',
-    ]
-    
+    price_patterns = ['MSRP', 'msrp', 'EXT MSRP', 'Retail', 'retail', 'Price', 'price', 'Cost', 'cost']
     retail_col = None
-    for pattern in price_column_patterns:
+    for pattern in price_patterns:
         if pattern in df.columns:
             retail_col = pattern
             break
     
     if not retail_col:
         for col in df.columns:
-            col_lower = col.lower().strip()
-            if any(keyword in col_lower for keyword in ['msrp', 'retail', 'price', 'cost']):
+            if any(k in col.lower() for k in ['msrp', 'retail', 'price', 'cost']):
                 retail_col = col
                 break
     
     if retail_col:
-        st.info(f"💰 Found price column: '{retail_col}' - prices will be preserved for sorting!")
+        st.info(f"💰 Price column: '{retail_col}'")
 
-    df_copy = df.copy()
-    df_copy = df_copy.rename(columns={asin_col: 'Asin'})
+    df = df.rename(columns={asin_col: 'Asin'})
+    unique_asins = df['Asin'].unique()
+    total_asins = len(unique_asins)
     
-    st.session_state.logs = []
-    st.session_state.failed_asins = []
-    st.session_state.processing_complete = False
-    st.session_state.current_processing_id = 0
-    st.session_state.total_processing_count = 0
+    num_batches = (total_asins + batch_size - 1) // batch_size
+    
+    st.success(f"🎯 BATCH MODE: {total_asins} ASINs → {num_batches} batches of {batch_size}")
+    st.info("💡 Memory-safe: Each batch clears memory")
     
     progress_bar = st.progress(0)
     status_text = st.empty()
     current_status = st.empty()
     
-    unique_asins = df_copy['Asin'].unique()
-    total_asins = len(unique_asins)
-    
-    # Track start time for speed calculation
     start_time = time.time()
+    total_success = 0
+    total_failed = 0
+    failed_list = []
     
-    status_text.text(f"🚀 FAST MODE: Processing {total_asins} ASINs - NO delays!")
-    add_log(f"Starting OPTIMIZED processing of {total_asins} unique ASINs from column '{asin_col}'")
-    
-    log_queue = queue.Queue()
-    
-    def process_log_queue(log_queue):
-        while not log_queue.empty():
-            try:
-                item = log_queue.get()
-                if isinstance(item, tuple) and len(item) == 2:
-                    level, message = item
-                    st.session_state.logs.append((level, message))
-                else:
-                    st.session_state.logs.append(("error", f"Malformed log entry: {str(item)}"))
-            except Exception as e:
-                st.session_state.logs.append(("error", f"Error processing log entry: {str(e)}"))
-    
-    def process_batch(asins, start_index):
-        product_details_dict = {}
-        batch_log_queue = queue.Queue()
+    # Process each batch
+    for batch_num in range(num_batches):
+        start_idx = batch_num * batch_size
+        end_idx = min(start_idx + batch_size, total_asins)
+        batch_asins = unique_asins[start_idx:end_idx]
         
-        for i, asin in enumerate(asins):
-            processing_id = start_index + i + 1
+        st.markdown(f"### 📦 Batch {batch_num + 1}/{num_batches} ({len(batch_asins)} ASINs)")
+        batch_progress = st.progress(0)
+        
+        for i, asin in enumerate(batch_asins):
+            global_idx = start_idx + i + 1
+            current_status.text(f"🔄 {asin} ({global_idx}/{total_asins})")
             
             retail_price = None
             if retail_col:
-                asin_row = df_copy[df_copy['Asin'] == asin]
+                asin_row = df[df['Asin'] == asin]
                 if not asin_row.empty:
-                    price_value = asin_row.iloc[0][retail_col]
-                    if pd.notna(price_value):
-                        retail_price = str(price_value).replace('$', '').replace(',', '').replace('#', '')
+                    pv = asin_row.iloc[0][retail_col]
+                    if pd.notna(pv):
+                        retail_price = str(pv).replace('$', '').replace(',', '').replace('#', '')
                         try:
                             retail_price = float(retail_price)
                         except:
-                            retail_price = str(price_value)
+                            retail_price = str(pv)
             
-            current_status.text(f"🔄 Processing: {asin} ({processing_id}/{total_asins})...")
+            result = get_amazon_product_details(asin, queue.Queue(), global_idx, total_asins, retail_price)
             
-            product_details = get_amazon_product_details(asin, batch_log_queue, processing_id, total_asins, retail_price)
-            product_details_dict[asin] = product_details
-            
-            if product_details['success'] and product_details['image_url']:
-                current_status.text(f"✅ {asin} - Image found!")
-            elif product_details.get('error'):
-                error_msg = product_details['error'][:50]
-                current_status.text(f"❌ {asin} - Error: {error_msg}")
+            if result and result.get('success'):
+                total_success += 1
+                current_status.text(f"✅ {asin} - Saved!")
             else:
-                current_status.text(f"⚠️ {asin} - No image found")
+                total_failed += 1
+                failed_list.append(asin)
+                current_status.text(f"❌ {asin} - Failed")
             
-            if not product_details['success'] or not product_details['image_url']:
-                st.session_state.failed_asins.append(asin)
-        
-        while not batch_log_queue.empty():
-            log_queue.put(batch_log_queue.get())
-        
-        process_log_queue(batch_log_queue)
-        
-        return product_details_dict
-    
-    batch_size = 1
-    all_product_details = {}
-    
-    for i in range(0, len(unique_asins), batch_size):
-        batch_asins = unique_asins[i:i+batch_size]
-        
-        progress = i / len(unique_asins)
-        progress_bar.progress(progress)
-        
-        # Calculate speed and ETA
-        elapsed = time.time() - start_time
-        if elapsed > 0:
-            rate = (i + 1) / elapsed  # ASINs per second
-            rate_per_min = rate * 60  # ASINs per minute
-            remaining = len(unique_asins) - (i + 1)
-            eta_seconds = remaining / rate if rate > 0 else 0
-            eta_minutes = eta_seconds / 60
+            batch_progress.progress((i + 1) / len(batch_asins))
+            progress_bar.progress(global_idx / total_asins)
+            
+            elapsed = time.time() - start_time
+            rate = global_idx / elapsed if elapsed > 0 else 0
+            eta = (total_asins - global_idx) / rate if rate > 0 else 0
             
             status_text.text(
-                f"Progress: {i+1}/{len(unique_asins)} | "
-                f"✅ {len(all_product_details) - len(st.session_state.failed_asins)} | "
-                f"❌ {len(st.session_state.failed_asins)} | "
-                f"Speed: {rate_per_min:.1f}/min | "
-                f"ETA: {eta_minutes:.1f} mins"
+                f"📊 {global_idx}/{total_asins} | "
+                f"✅{total_success} ❌{total_failed} | "
+                f"⚡{rate*60:.1f}/min | ETA:{eta/60:.1f}m"
             )
         
-        batch_results = process_batch(batch_asins, i)
-        all_product_details.update(batch_results)
-        
-        while not log_queue.empty():
-            level, message = log_queue.get()
-            st.session_state.logs.append((level, message))
-        
-        progress = (i + len(batch_asins)) / len(unique_asins)
-        progress_bar.progress(progress)
-        
-        # Aggressive garbage collection every 50 ASINs
-        if (i + 1) % 50 == 0:
-            gc.collect()
-    
-    enriched_data = []
-    
-    for _, row in df_copy.iterrows():
-        asin = row['Asin']
-        product_info = all_product_details.get(asin, {
-            'asin': asin,
-            'image_url': '',
-            'success': False,
-            'error': 'Processing skipped'
-        })
-        
-        new_row = row.to_dict()
-        new_row.update({
-            'Product_Image_URL': product_info['image_url'],
-            'Fetch_Success': product_info['success'],
-            'Error': product_info.get('error', None)
-        })
-        
-        enriched_data.append(new_row)
-    
-    enriched_df = pd.DataFrame(enriched_data)
-    
-    st.session_state.processing_complete = True
+        st.success(f"✅ Batch {batch_num + 1} done")
+        gc.collect()  # CLEAR MEMORY
+        batch_progress.empty()
     
     progress_bar.progress(1.0)
     status_text.empty()
     current_status.empty()
     
-    # Calculate total time
     total_time = time.time() - start_time
     
-    success_count = len(enriched_df[enriched_df['Fetch_Success'] == True])
-    failed_count = len(st.session_state.failed_asins)
-    
     st.markdown("---")
-    st.success(f"✅ Processing complete in {total_time/60:.1f} minutes! Average speed: {total_asins/(total_time/60):.1f} ASINs/min")
+    st.success(f"🎉 COMPLETE in {total_time/60:.1f} mins!")
     
     col1, col2, col3 = st.columns(3)
+    col1.metric("✅ Success", total_success)
+    col2.metric("❌ Failed", total_failed)
+    col3.metric("📊 Rate", f"{(total_success/total_asins*100):.1f}%")
     
-    with col1:
-        st.metric("✅ Successful", success_count, help="ASINs with images retrieved successfully")
+    if failed_list:
+        with st.expander(f"❌ Failed ({len(failed_list)})", expanded=False):
+            for fa in failed_list[:50]:
+                st.text(fa)
+            if len(failed_list) > 50:
+                st.text(f"...+{len(failed_list)-50} more")
     
-    with col2:
-        st.metric("❌ Failed", failed_count, help="ASINs that failed to retrieve images")
-    
-    with col3:
-        success_rate = (success_count / total_asins * 100) if total_asins > 0 else 0
-        st.metric("📊 Success Rate", f"{success_rate:.1f}%", help="Percentage of successful retrievals")
-    
-    if st.session_state.failed_asins:
-        for failed_asin in st.session_state.failed_asins[:20]:
-            st.markdown(f'<span class="failed-asin-item">{failed_asin}</span>', unsafe_allow_html=True)
-        
-        if failed_count > 20:
-            st.markdown(f'<span class="failed-asin-item">... and {failed_count - 20} more</span>', unsafe_allow_html=True)
-        
-        st.markdown('</div></div>', unsafe_allow_html=True)
-        
-        st.markdown("---")
-        
-        error_report = generate_error_report(
-            enriched_df, 
-            st.session_state.failed_asins, 
-            st.session_state.logs
-        )
-        
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            with st.expander("📋 Error Summary Preview", expanded=True):
-                error_counts = error_report['Error_Category'].value_counts()
-                error_counts = error_counts[error_counts.index != '']
-                
-                if not error_counts.empty:
-                    for error_type, count in error_counts.items():
-                        if error_type not in ['=== SUMMARY ===', '=== DETAILED ERRORS ===']:
-                            percentage = (count / failed_count * 100) if failed_count > 0 else 0
-                            st.markdown(f"**{error_type}:** {count} ({percentage:.1f}%)")
-        
-        with col2:
-            st.download_button(
-                label="📥 Download Error Report",
-                data=error_report.to_csv(index=False),
-                file_name=f"error_report_{time.strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-                key="error_report_download",
-                help="Download detailed report of all failed ASINs",
-                type="primary"
-            )
-    
-    # Final garbage collection
     gc.collect()
-    
-    return enriched_df
+    return load_stored_images_from_supabase("amazon")
 
 def process_direct_urls_data(df, max_rows=None):
     if max_rows is not None and max_rows > 0 and max_rows < len(df):
@@ -1082,21 +955,14 @@ def process_excel_format_data(df, max_rows=None):
     
     return enriched_df
 
-def process_csv_data(df, max_rows=None):
+def process_csv_data(df, max_rows=None, batch_size=100):
     csv_type = detect_csv_type(df)
     
     if csv_type == 'amazon':
         if not any(col.lower() in ['asin', 'sku'] for col in df.columns):
             st.error("The CSV file must contain an 'Asin' column for Amazon products.")
             return None
-        return process_amazon_data(df, max_rows)
-    elif csv_type == 'excel_format':
-        return process_excel_format_data(df, max_rows)
-    elif csv_type == 'direct_urls':
-        return process_direct_urls_data(df, max_rows)
-    else:
-        st.error("Could not detect CSV format. Please ensure your file contains either 'Asin' column for Amazon products, 'Listing ID' and 'url' columns for Excel format, or direct image URLs.")
-        return None
+        return process_amazon_data_batched(df, max_rows, batch_size)  # ← NEW LINE
 
 def display_product_grid(df, search_term=None, min_price=None, max_price=None, sort_by=None):
     if df is None or df.empty:
@@ -1880,13 +1746,15 @@ def render_upload_tab():
             if process_limit > 0 and process_limit < total_rows:
                 st.warning(f"You've chosen to process only {process_limit} rows out of {total_rows} total rows.")
             
-            if st.button("🚀 Process (FAST MODE - No Delays!)", key="process_button_unique", type="primary", help="Optimized for speed - Zyte handles rate limiting"):
+            batch_size = st.slider("Batch size (ASINs per batch):", 50, 200, 100, 25, help="Smaller = safer, Larger = faster")
+            
+            if st.button("🚀 Process in Batches (Memory-Safe)", key="process_button_unique", type="primary", help="Processes in batches to avoid memory issues"):
                 if csv_type == 'unknown':
                     st.error("Could not detect file format. Please ensure your file contains either 'Asin' column for Amazon products or direct image URLs.")
                 else:
                     with st.spinner("⚡ Processing at maximum speed..."):
                         max_rows = process_limit if process_limit > 0 else None
-                        new_data = process_csv_data(df, max_rows)
+                        new_data = process_csv_data(df, max_rows, batch_size)
                         
                         if new_data is not None:
                             if csv_type == 'amazon':
