@@ -1,3 +1,4 @@
+import gc
 import base64
 import streamlit as st
 import pandas as pd
@@ -13,10 +14,8 @@ import os
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
-# Load environment variables from .env file
 load_dotenv()
 
-# Environment variables for sensitive data
 ZYTE_API_KEY = os.getenv('ZYTE_API_KEY')
 SUPABASE_URL = os.getenv('SUPABASE_URL', "https://sjxkhpuaucenweapjlre.supabase.co")
 SUPABASE_KEY = os.getenv('SUPABASE_KEY', "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNqeGtocHVhdWNlbndlYXBqbHJlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMyNjIyMTYsImV4cCI6MjA3ODgzODIxNn0.2R7gf9pi0rdCq9CpK-IEmFOAvU69BrOULKYmID47FwQ")
@@ -61,17 +60,12 @@ def create_image_hash(image_url):
 def store_image_to_supabase(asin, image_url, source_type="amazon", retail_price=None):
     try:
         supabase = get_supabase_client()
-        
         image_hash = create_image_hash(image_url)
-        
-        # Check if image already exists
         existing = supabase.table('product_images').select('*').eq('image_hash', image_hash).execute()
         
         if existing.data:
-            add_log(f"Image already exists for ASIN {asin}, skipping", "warning")
             return False
         
-        # Insert new image with retail price
         data = {
             'asin': asin,
             'image_url': image_url,
@@ -82,16 +76,9 @@ def store_image_to_supabase(asin, image_url, source_type="amazon", retail_price=
         }
         
         result = supabase.table('product_images').insert(data).execute()
-        
-        if result.data:
-            add_log(f"Stored image for ASIN {asin} to Supabase with price {retail_price}", "success")
-            return True
-        else:
-            add_log(f"Failed to store image for ASIN {asin}", "error")
-            return False
+        return bool(result.data)
             
     except Exception as e:
-        add_log(f"Supabase error for ASIN {asin}: {str(e)}", "error")
         return False
 
 def delete_all_images_from_supabase():
@@ -100,14 +87,11 @@ def delete_all_images_from_supabase():
         result = supabase.table('product_images').delete().neq('id', 0).execute()
         
         if hasattr(result, 'data'):
-            add_log("All images deleted from Supabase", "success")
             return True
         else:
-            add_log("Failed to delete images from Supabase", "error")
             return False
             
     except Exception as e:
-        add_log(f"Error deleting images: {str(e)}", "error")
         return False
 
 def get_stored_images_count():
@@ -137,54 +121,39 @@ def load_stored_images_from_supabase(source_filter="amazon"):
                 })
             
             df = pd.DataFrame(stored_data)
-            add_log(f"Loaded {len(stored_data)} stored {source_filter} images from Supabase (sorted by price)", "success")
             return df
         else:
-            add_log(f"No stored {source_filter} images found in Supabase", "info")
             return pd.DataFrame()
             
     except Exception as e:
-        add_log(f"Error loading stored {source_filter} images: {str(e)}", "error")
         return pd.DataFrame()
 
 def combine_stored_and_new_images(new_df=None, source_type="amazon"):
     stored_df = load_stored_images_from_supabase(source_type)
-
     
     if new_df is not None and not new_df.empty:
-        # Combine stored and new images
         if not stored_df.empty:
-            # Make sure columns match
             for col in ['Asin', 'Product_Image_URL', 'Fetch_Success', 'Error']:
                 if col not in stored_df.columns:
                     stored_df[col] = ''
                 if col not in new_df.columns:
                     new_df[col] = ''
             
-            # Combine dataframes
             combined_df = pd.concat([stored_df, new_df], ignore_index=True)
-            # Remove duplicates based on image URL
             combined_df = combined_df.drop_duplicates(subset=['Product_Image_URL'], keep='first')
-            add_log(f"Combined {len(stored_df)} stored + {len(new_df)} new = {len(combined_df)} total {source_type} images", "info")
             return combined_df
         else:
             return new_df
     else:
-        # Only return stored images
         return stored_df
 
 def generate_error_report(df, failed_asins, logs):
-    """Generate a comprehensive error report CSV"""
     report_data = []
     
-    # Analyze each failed ASIN
     for asin in failed_asins:
         asin_row = df[df['Asin'] == asin].iloc[0] if 'Asin' in df.columns and not df[df['Asin'] == asin].empty else None
-        
-        # Find relevant log entries for this ASIN
         asin_logs = [msg for level, msg in logs if str(asin) in str(msg)]
         
-        # Determine error category
         error_category = "Unknown Error"
         error_detail = ""
         retry_recommended = "No"
@@ -209,12 +178,7 @@ def generate_error_report(df, failed_asins, logs):
             error_category = "Timeout/Service Unavailable"
             error_detail = "Connection timeout or service unavailable"
             retry_recommended = "Yes"
-        elif any("Failed after 3 attempts" in log for log in asin_logs):
-            error_category = "Multiple Failures"
-            error_detail = "Failed all 3 retry attempts"
-            retry_recommended = "Maybe"
         
-        # Get retail price if available
         retail_price = ""
         if asin_row is not None:
             price_column_patterns = [
@@ -238,12 +202,8 @@ def generate_error_report(df, failed_asins, logs):
         })
     
     report_df = pd.DataFrame(report_data)
-    
-    # Add summary statistics at the top
     summary_data = []
     total_failed = len(failed_asins)
-    
-    # Count by error category
     error_counts = report_df['Error_Category'].value_counts() if not report_df.empty else pd.Series()
     
     summary_data.append({
@@ -579,8 +539,12 @@ def add_log(message, level="info"):
     timestamp = time.strftime("%H:%M:%S", time.localtime())
     log_entry = (level, f"[{timestamp}] {message}")
     st.session_state.logs.append(log_entry)
+    # Keep only last 50 logs to save memory
+    if len(st.session_state.logs) > 50:
+        st.session_state.logs = st.session_state.logs[-50:]
 
 def get_amazon_product_details(asin, log_queue, processing_id, total_count, retail_price=None):
+    """OPTIMIZED: Single attempt, no delays - Zyte handles everything"""
     st.session_state.current_processing_id = processing_id
     st.session_state.total_processing_count = total_count
     
@@ -592,88 +556,78 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count, reta
         'error': None
     }
 
-    for attempt in range(3):
-        url = f"https://www.amazon.com/dp/{asin}"
+    # SINGLE ATTEMPT - NO RETRIES, NO DELAYS
+    # Zyte API handles retries, rate limiting, and proxy rotation internally
+    url = f"https://www.amazon.com/dp/{asin}"
+    
+    try:
+        if not ZYTE_API_KEY:
+            product_details['error'] = 'Zyte API key not configured'
+            return product_details
         
-        if attempt > 0:
-            sleep_time = 2 + random.uniform(1, 3)
-            time.sleep(sleep_time)
+        api_response = requests.post(
+            "https://api.zyte.com/v1/extract",
+            auth=(ZYTE_API_KEY, ""),
+            json={
+                "url": url,
+                "httpResponseBody": True,
+                "followRedirect": True,
+            },
+            timeout=60
+        )
         
-        try:
-            if not ZYTE_API_KEY:
-                product_details['error'] = 'Zyte API key not configured'
-                return product_details
+        if api_response.status_code == 200:
+            response_data = api_response.json()
+            http_response_body = base64.b64decode(response_data["httpResponseBody"])
+            resp_text = http_response_body.decode('utf-8', errors='ignore')
+            soup = BeautifulSoup(resp_text, 'html.parser')
+            img_tag = soup.find("img", {"id": "landingImage"})
             
-            api_response = requests.post(
-                "https://api.zyte.com/v1/extract",
-                auth=(ZYTE_API_KEY, ""),
-                json={
-                    "url": url,
-                    "httpResponseBody": True,
-                    "followRedirect": True,
-                },
-                timeout=60
-            )
-            
-            if api_response.status_code == 200:
-                response_data = api_response.json()
-                
-                http_response_body = base64.b64decode(response_data["httpResponseBody"])
-                resp_text = http_response_body.decode('utf-8', errors='ignore')
-                
-                soup = BeautifulSoup(resp_text, 'html.parser')
-                
-                img_tag = soup.find("img", {"id": "landingImage"})
-                
-                if img_tag and img_tag.get("data-a-dynamic-image"):
-                    try:
-                        images_dict = json.loads(img_tag["data-a-dynamic-image"])
-                        largest_image = max(images_dict.keys(), 
-                                          key=lambda x: images_dict[x][0] * images_dict[x][1])
-                        
-                        if '._' in largest_image:
-                            base_url = largest_image.split('._')[0]
-                            largest_image = base_url + "._AC_SL1500_.jpg"
-                        
-                        product_details['image_url'] = largest_image
-                        product_details['success'] = True
-                        
-                        store_image_to_supabase(asin, largest_image, "amazon", retail_price)
-                        
-                        return product_details
-                    except Exception as e:
-                        product_details['error'] = f'Image parse error: {str(e)}'
-
-                if img_tag and img_tag.get("src"):
-                    src_url = img_tag["src"]
-                    if '._' in src_url:
-                        base_url = src_url.split('._')[0]
-                        src_url = base_url + "._AC_SL1500_.jpg"
-                    product_details['image_url'] = src_url
+            if img_tag and img_tag.get("data-a-dynamic-image"):
+                try:
+                    images_dict = json.loads(img_tag["data-a-dynamic-image"])
+                    largest_image = max(images_dict.keys(), 
+                                      key=lambda x: images_dict[x][0] * images_dict[x][1])
+                    
+                    if '._' in largest_image:
+                        base_url = largest_image.split('._')[0]
+                        largest_image = base_url + "._AC_SL1500_.jpg"
+                    
+                    product_details['image_url'] = largest_image
                     product_details['success'] = True
-                    
-                    store_image_to_supabase(asin, src_url, "amazon", retail_price)
-                    
+                    store_image_to_supabase(asin, largest_image, "amazon", retail_price)
                     return product_details
-            
-            elif api_response.status_code == 422:
-                error_detail = api_response.json().get('detail', 'Unknown error')
-                product_details['error'] = f'Validation error: {error_detail}'
-            elif api_response.status_code == 429:
-                product_details['error'] = 'Rate limit exceeded'
-            elif api_response.status_code == 503:
-                product_details['error'] = 'Service unavailable (503)'
-            elif api_response.status_code == 404:
-                product_details['error'] = 'Product not found (404)'
-            else:
-                product_details['error'] = f'HTTP {api_response.status_code}'
+                except Exception as e:
+                    product_details['error'] = f'Image parse error: {str(e)}'
+
+            if img_tag and img_tag.get("src"):
+                src_url = img_tag["src"]
+                if '._' in src_url:
+                    base_url = src_url.split('._')[0]
+                    src_url = base_url + "._AC_SL1500_.jpg"
+                product_details['image_url'] = src_url
+                product_details['success'] = True
+                store_image_to_supabase(asin, src_url, "amazon", retail_price)
+                return product_details
         
-        except Exception as e:
-            product_details['error'] = str(e)[:100]  # Truncate long errors
+        elif api_response.status_code == 422:
+            error_detail = api_response.json().get('detail', 'Unknown error')
+            product_details['error'] = f'Validation error: {error_detail}'
+        elif api_response.status_code == 429:
+            product_details['error'] = 'Rate limit exceeded'
+        elif api_response.status_code == 503:
+            product_details['error'] = 'Service unavailable (503)'
+        elif api_response.status_code == 404:
+            product_details['error'] = 'Product not found (404)'
+        else:
+            product_details['error'] = f'HTTP {api_response.status_code}'
+    
+    except Exception as e:
+        product_details['error'] = str(e)[:100]
     
     if not product_details['success']:
         if not product_details['error']:
-            product_details['error'] = 'Failed after 3 attempts'
+            product_details['error'] = 'No image found'
     
     return product_details
 
@@ -706,6 +660,7 @@ def detect_csv_type(df):
     return 'unknown'
 
 def process_amazon_data(df, max_rows=None):
+    """OPTIMIZED: Fast processing with live speed tracking"""
     if max_rows is not None and max_rows > 0 and max_rows < len(df):
         df = df.head(max_rows)
     
@@ -719,25 +674,21 @@ def process_amazon_data(df, max_rows=None):
         st.error(f"No ASIN/SKU column found. Available columns: {list(df.columns)}")
         return None
 
-    # Intelligent price column detection - prioritized list
     price_column_patterns = [
-        'MSRP', 'msrp', 'EXT MSRP', 'ext msrp', 'Ext MSRP',  # MSRP variations
-        'Retail', 'retail', 'RETAIL',  # Retail variations
-        'Price', 'price', 'PRICE',  # Price variations
-        'Cost', 'cost', 'COST',  # Cost variations
-        'List Price', 'list price', 'LIST PRICE',  # List price
-        'Unit Price', 'unit price', 'UNIT PRICE',  # Unit price
+        'MSRP', 'msrp', 'EXT MSRP', 'ext msrp', 'Ext MSRP',
+        'Retail', 'retail', 'RETAIL',
+        'Price', 'price', 'PRICE',
+        'Cost', 'cost', 'COST',
+        'List Price', 'list price', 'LIST PRICE',
+        'Unit Price', 'unit price', 'UNIT PRICE',
     ]
     
     retail_col = None
-    
-    # First, try exact matches in priority order
     for pattern in price_column_patterns:
         if pattern in df.columns:
             retail_col = pattern
             break
     
-    # If no exact match, try partial matches (contains)
     if not retail_col:
         for col in df.columns:
             col_lower = col.lower().strip()
@@ -764,8 +715,11 @@ def process_amazon_data(df, max_rows=None):
     unique_asins = df_copy['Asin'].unique()
     total_asins = len(unique_asins)
     
-    status_text.text(f"Processing {total_asins} unique Amazon products...")
-    add_log(f"Starting processing of {total_asins} unique ASINs from column '{asin_col}'")
+    # Track start time for speed calculation
+    start_time = time.time()
+    
+    status_text.text(f"🚀 FAST MODE: Processing {total_asins} ASINs - NO delays!")
+    add_log(f"Starting OPTIMIZED processing of {total_asins} unique ASINs from column '{asin_col}'")
     
     log_queue = queue.Queue()
     
@@ -773,7 +727,6 @@ def process_amazon_data(df, max_rows=None):
         while not log_queue.empty():
             try:
                 item = log_queue.get()
-                
                 if isinstance(item, tuple) and len(item) == 2:
                     level, message = item
                     st.session_state.logs.append((level, message))
@@ -801,17 +754,15 @@ def process_amazon_data(df, max_rows=None):
                         except:
                             retail_price = str(price_value)
             
-            # Update current status before processing
             current_status.text(f"🔄 Processing: {asin} ({processing_id}/{total_asins})...")
             
             product_details = get_amazon_product_details(asin, batch_log_queue, processing_id, total_asins, retail_price)
             product_details_dict[asin] = product_details
             
-            # Update status based on result
             if product_details['success'] and product_details['image_url']:
-                current_status.text(f"✅ {asin} - Status 200 - Image found")
+                current_status.text(f"✅ {asin} - Image found!")
             elif product_details.get('error'):
-                error_msg = product_details['error'][:50]  # Truncate long errors
+                error_msg = product_details['error'][:50]
                 current_status.text(f"❌ {asin} - Error: {error_msg}")
             else:
                 current_status.text(f"⚠️ {asin} - No image found")
@@ -834,7 +785,23 @@ def process_amazon_data(df, max_rows=None):
         
         progress = i / len(unique_asins)
         progress_bar.progress(progress)
-        status_text.text(f"Processing batch {i//batch_size + 1} of {(len(unique_asins) + batch_size - 1) // batch_size}")
+        
+        # Calculate speed and ETA
+        elapsed = time.time() - start_time
+        if elapsed > 0:
+            rate = (i + 1) / elapsed  # ASINs per second
+            rate_per_min = rate * 60  # ASINs per minute
+            remaining = len(unique_asins) - (i + 1)
+            eta_seconds = remaining / rate if rate > 0 else 0
+            eta_minutes = eta_seconds / 60
+            
+            status_text.text(
+                f"Progress: {i+1}/{len(unique_asins)} | "
+                f"✅ {len(all_product_details) - len(st.session_state.failed_asins)} | "
+                f"❌ {len(st.session_state.failed_asins)} | "
+                f"Speed: {rate_per_min:.1f}/min | "
+                f"ETA: {eta_minutes:.1f} mins"
+            )
         
         batch_results = process_batch(batch_asins, i)
         all_product_details.update(batch_results)
@@ -845,9 +812,10 @@ def process_amazon_data(df, max_rows=None):
         
         progress = (i + len(batch_asins)) / len(unique_asins)
         progress_bar.progress(progress)
-        status_text.text(f"Processed {i + len(batch_asins)} of {len(unique_asins)} products ({int(progress*100)}%)")
         
-        time.sleep(0.1)
+        # Aggressive garbage collection every 50 ASINs
+        if (i + 1) % 50 == 0:
+            gc.collect()
     
     enriched_data = []
     
@@ -877,10 +845,15 @@ def process_amazon_data(df, max_rows=None):
     status_text.empty()
     current_status.empty()
     
+    # Calculate total time
+    total_time = time.time() - start_time
+    
     success_count = len(enriched_df[enriched_df['Fetch_Success'] == True])
     failed_count = len(st.session_state.failed_asins)
     
     st.markdown("---")
+    st.success(f"✅ Processing complete in {total_time/60:.1f} minutes! Average speed: {total_asins/(total_time/60):.1f} ASINs/min")
+    
     col1, col2, col3 = st.columns(3)
     
     with col1:
@@ -933,6 +906,9 @@ def process_amazon_data(df, max_rows=None):
                 help="Download detailed report of all failed ASINs",
                 type="primary"
             )
+    
+    # Final garbage collection
+    gc.collect()
     
     return enriched_df
 
@@ -991,7 +967,6 @@ def process_direct_urls_data(df, max_rows=None):
             add_log(f"Found image URL for Listing ID: {listing_id}", "success")
         
         enriched_data.append(new_row)
-        time.sleep(0.05)
     
     enriched_df = pd.DataFrame(enriched_data)
     
@@ -1080,7 +1055,6 @@ def process_excel_format_data(df, max_rows=None):
             add_log(f"Valid image URL found for Listing ID: {listing_id}", "success")
         
         enriched_data.append(new_row)
-        time.sleep(0.1)
         
     enriched_df = pd.DataFrame(enriched_data)
     
@@ -1131,7 +1105,6 @@ def display_product_grid(df, search_term=None, min_price=None, max_price=None, s
         
     filtered_df = df.copy()
     
-    # Intelligent price column detection - prioritized list
     price_column_patterns = [
         'MSRP', 'msrp', 'EXT MSRP', 'ext msrp', 'Ext MSRP',
         'Retail', 'retail', 'RETAIL',
@@ -1143,13 +1116,11 @@ def display_product_grid(df, search_term=None, min_price=None, max_price=None, s
     
     retail_col = None
     
-    # First, try exact matches in priority order
     for pattern in price_column_patterns:
         if pattern in filtered_df.columns:
             retail_col = pattern
             break
     
-    # If no exact match, try partial matches (contains)
     if not retail_col:
         for col in filtered_df.columns:
             col_lower = col.lower().strip()
@@ -1159,7 +1130,7 @@ def display_product_grid(df, search_term=None, min_price=None, max_price=None, s
     
     if retail_col:
         try:
-            filtered_df[f'{retail_col}_numeric'] = filtered_df[retail_col].astype(str).str.replace('$'  , '').str.replace(',', '').str.replace('#', '')
+            filtered_df[f'{retail_col}_numeric'] = filtered_df[retail_col].astype(str).str.replace('$', '').str.replace(',', '').str.replace('#', '')
             filtered_df[f'{retail_col}_numeric'] = pd.to_numeric(filtered_df[f'{retail_col}_numeric'], errors='coerce')
             
             filtered_df = filtered_df.sort_values(by=f'{retail_col}_numeric', ascending=False, na_position='last')
@@ -1267,7 +1238,6 @@ def display_fullscreen_grid(df, search_term=None, min_price=None, max_price=None
         
     filtered_df = df.copy()
     
-    # Intelligent price column detection - prioritized list
     price_column_patterns = [
         'MSRP', 'msrp', 'EXT MSRP', 'ext msrp', 'Ext MSRP',
         'Retail', 'retail', 'RETAIL',
@@ -1279,13 +1249,11 @@ def display_fullscreen_grid(df, search_term=None, min_price=None, max_price=None
     
     retail_col = None
     
-    # First, try exact matches in priority order
     for pattern in price_column_patterns:
         if pattern in filtered_df.columns:
             retail_col = pattern
             break
     
-    # If no exact match, try partial matches (contains)
     if not retail_col:
         for col in filtered_df.columns:
             col_lower = col.lower().strip()
@@ -1912,23 +1880,23 @@ def render_upload_tab():
             if process_limit > 0 and process_limit < total_rows:
                 st.warning(f"You've chosen to process only {process_limit} rows out of {total_rows} total rows.")
             
-            if st.button("Process and Fetch Product Images", key="process_button_unique", help="Click to start processing the uploaded file"):
+            if st.button("🚀 Process (FAST MODE - No Delays!)", key="process_button_unique", type="primary", help="Optimized for speed - Zyte handles rate limiting"):
                 if csv_type == 'unknown':
                     st.error("Could not detect file format. Please ensure your file contains either 'Asin' column for Amazon products or direct image URLs.")
                 else:
-                    with st.spinner("Processing data and fetching images..."):
+                    with st.spinner("⚡ Processing at maximum speed..."):
                         max_rows = process_limit if process_limit > 0 else None
                         new_data = process_csv_data(df, max_rows)
                         
                         if new_data is not None:
                             if csv_type == 'amazon':
                                 st.session_state.processed_data = combine_stored_and_new_images(new_data, "amazon")
-                                st.success("Amazon data processed successfully! Check Amazon Grid Images tab to view all Amazon images (stored + new).")
+                                st.success("✅ Amazon data processed successfully! Check Amazon Grid Images tab to view all Amazon images (stored + new).")
                             else:
                                 st.session_state.processed_data = new_data
-                                st.success("Data processed successfully! Check Excel Grid Images tab to view images (temporary, not stored).")
+                                st.success("✅ Data processed successfully! Check Excel Grid Images tab to view images (temporary, not stored).")
                         else:
-                            st.error("Failed to process data. Please check your file format.")
+                            st.error("❌ Failed to process data. Please check your file format.")
         
         except Exception as e:
             st.error(f"Error reading the file: {str(e)}")
@@ -1973,7 +1941,7 @@ def main():
     st.markdown("""
     <div class="main-header">
         <h1>Universal <span class="accent-text">Image Viewer</span></h1>
-        <div class="subtitle">Upload CSV files with Amazon ASINs or direct image URLs to view images in grid format</div>
+        <div class="subtitle">⚡ OPTIMIZED - No Delays - Zyte Handles Everything - Process 1000+ ASINs Fast!</div>
     </div>
     """, unsafe_allow_html=True)
     
@@ -2002,8 +1970,8 @@ def main():
     
     st.markdown("""
     <div class="footer">
-        <p>Universal Image Viewer App | Support for Amazon ASINs & Direct Image URLs</p>
-        <p>Enhanced for reliable image retrieval and grid display from multiple sources</p>
+        <p>Universal Image Viewer App | Optimized for 1000+ ASINs | Support for Amazon ASINs & Direct Image URLs</p>
+        <p>⚡ Fast Mode: No unnecessary delays - Zyte API handles rate limiting & retries</p>
     </div>
     """, unsafe_allow_html=True)
 
