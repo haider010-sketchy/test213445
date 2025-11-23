@@ -528,46 +528,13 @@ def add_custom_css():
     }
 
     /* NEW: Batch processing status styles */
-    .batch-status-container {
-        background-color: #e8f4fd;
-        border: 2px solid #2196F3;
-        border-radius: 10px;
-        padding: 20px;
-        margin: 15px 0;
-        text-align: center;
-    }
-    
-    .batch-status-title {
-        color: #1976D2;
-        font-size: 18px;
-        font-weight: bold;
-        margin-bottom: 15px;
-    }
-    
-    .batch-stats {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-        gap: 15px;
-        margin: 15px 0;
-    }
-    
-    .batch-stat-item {
-        background-color: white;
+    .simple-batch-info {
+        background-color: #f0f8ff;
+        border: 1px solid #2196F3;
+        border-radius: 5px;
         padding: 10px;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    
-    .batch-stat-number {
-        font-size: 24px;
-        font-weight: bold;
-        color: #2196F3;
-    }
-    
-    .batch-stat-label {
-        font-size: 12px;
-        color: #666;
-        margin-top: 5px;
+        margin: 10px 0;
+        color: #1976D2;
     }
 
     @media (max-width: 768px) {
@@ -901,40 +868,8 @@ def render_batch_status():
     rate = total_processed / elapsed_time if elapsed_time > 0 else 0
     eta = (total_asins - total_processed) / rate if rate > 0 else 0
     
-    # Display batch status
-    st.markdown(f"""
-    <div class="batch-status-container">
-        <div class="batch-status-title">
-            📊 Batch Processing Status
-        </div>
-        <div class="batch-stats">
-            <div class="batch-stat-item">
-                <div class="batch-stat-number">{state['current_batch']}/{state['total_batches']}</div>
-                <div class="batch-stat-label">BATCHES COMPLETED</div>
-            </div>
-            <div class="batch-stat-item">
-                <div class="batch-stat-number">{total_processed:,}</div>
-                <div class="batch-stat-label">TOTAL PROCESSED</div>
-            </div>
-            <div class="batch-stat-item">
-                <div class="batch-stat-number">{state['processed_count']:,}</div>
-                <div class="batch-stat-label">SUCCESSFUL</div>
-            </div>
-            <div class="batch-stat-item">
-                <div class="batch-stat-number">{state['failed_count']:,}</div>
-                <div class="batch-stat-label">FAILED</div>
-            </div>
-            <div class="batch-stat-item">
-                <div class="batch-stat-number">{rate*3600:.0f}</div>
-                <div class="batch-stat-label">ASINs/HOUR</div>
-            </div>
-            <div class="batch-stat-item">
-                <div class="batch-stat-number">{eta/3600:.1f}h</div>
-                <div class="batch-stat-label">ETA REMAINING</div>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    # Simple text display instead of fancy styling
+    st.info(f"📊 Batch {state['current_batch']}/{state['total_batches']} | Processed: {total_processed:,} | ✅{state['processed_count']:,} ❌{state['failed_count']:,} | Rate: {rate*3600:.0f}/hr")
     
     # Overall progress bar
     st.progress(overall_progress, text=f"Overall Progress: {total_processed:,}/{total_asins:,} ASINs ({overall_progress*100:.1f}%)")
