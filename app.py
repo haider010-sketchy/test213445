@@ -10,6 +10,8 @@ import time
 import sys
 import importlib.util
 import traceback
+from category_mapper import render_category_mapper
+
 
 # Force clear cache and rerun
 st.cache_data.clear()
@@ -925,7 +927,9 @@ else:
         if st.button("🎯 HiBid Scraper", key="hibid_btn", use_container_width=True): st.session_state.current_view = 'hibid'; st.rerun()
         if st.button("👑 BiddingKings Scraper", key="biddingkings_btn", use_container_width=True): st.session_state.current_view = 'biddingkings'; st.rerun()
         if st.button("🦙 BidLlama Scraper", key="bidllama_btn", use_container_width=True): st.session_state.current_view = 'bidllama'; st.rerun()
-
+        if st.button("📋 Category Mapper", key="category_mapper_btn", use_container_width=True): 
+            st.session_state.current_view = 'category_mapper'
+            st.rerun()
         st.markdown('<div class="section-header">📊 DIRECT PRICE SCRAPERS</div>', unsafe_allow_html=True)
         if st.button("🛍️ Nellis Scraper", key="nellis_btn", use_container_width=True): st.session_state.current_view = 'nellis'; st.rerun()
         if st.button("🎪 BidFTA Scraper", key="bidfta_btn", use_container_width=True): st.session_state.current_view = 'bidfta'; st.rerun()
@@ -952,6 +956,10 @@ else:
         show_welcome()
     elif view == 'amazon': 
         show_amazon_environment()
+    elif view == 'category_mapper':
+        create_page_header("Category Mapper", "AI-powered product categorization using GPT", icon="🏷️")
+        render_category_mapper()
+
     elif view in view_name_map:
         site_name = view_name_map[view]
         is_ai = view in ['hibid', 'biddingkings', 'bidllama']
