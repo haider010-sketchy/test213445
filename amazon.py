@@ -16,7 +16,7 @@ from supabase import create_client, Client
 
 load_dotenv()
 
-ZYTE_API_KEY = st.secrets('ZYTE_API_KEY')
+ZYTE_API_KEY = st.secrets["ZYTE_API_KEY"]
 SUPABASE_URL = os.getenv('SUPABASE_URL', "https://sjxkhpuaucenweapjlre.supabase.co")
 SUPABASE_KEY = os.getenv('SUPABASE_KEY', "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNqeGtocHVhdWNlbndlYXBqbHJlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMyNjIyMTYsImV4cCI6MjA3ODgzODIxNn0.2R7gf9pi0rdCq9CpK-IEmFOAvU69BrOULKYmID47FwQ")
 
