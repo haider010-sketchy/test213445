@@ -10,6 +10,7 @@ import os
 from dotenv import load_dotenv
 import time
 import io
+import glob
 
 load_dotenv()
 
@@ -209,6 +210,25 @@ def render_category_mapper():
     </style>
     """, unsafe_allow_html=True)
     
+    # Check for last saved file
+    excel_files = glob.glob("categorized_products_*.xlsx")
+    if excel_files:
+        latest_file = max(excel_files, key=os.path.getmtime)
+        file_time = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(os.path.getmtime(latest_file)))
+        
+        st.success(f"🎉 Last processed file found: **{latest_file}** (Generated: {file_time})")
+        
+        with open(latest_file, 'rb') as f:
+            st.download_button(
+                label="📥 Download Last Processed File",
+                data=f.read(),
+                file_name=latest_file,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_last_file",
+                type="primary"
+            )
+        st.markdown("---")
+    
     st.markdown("""
     <div class="upload-container">
         <div class="upload-icon">🏷️</div>
@@ -315,20 +335,22 @@ def render_category_mapper():
                     excel_data = output.getvalue()
                     filename = f"categorized_products_{time.strftime('%Y%m%d_%H%M%S')}.xlsx"
                     
-                    # Auto-download trigger
-                    st.markdown(f"""
-                    <script>
-                        const blob = new Blob([new Uint8Array({list(excel_data)})], {{type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}});
-                        const url = window.URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = '{filename}';
-                        document.body.appendChild(a);
-                        a.click();
-                        window.URL.revokeObjectURL(url);
-                        document.body.removeChild(a);
-                    </script>
-                    """, unsafe_allow_html=True)
+                    # Save file locally (keeps only the last one)
+                    try:
+                        # Delete old files first
+                        old_files = glob.glob("categorized_products_*.xlsx")
+                        for old_file in old_files:
+                            try:
+                                os.remove(old_file)
+                            except:
+                                pass
+                        
+                        # Save new file
+                        with open(filename, 'wb') as f:
+                            f.write(excel_data)
+                        st.info(f"✅ File saved on server: {filename} (accessible even after disconnect)")
+                    except Exception as e:
+                        st.warning(f"Could not save backup: {str(e)}")
                     
                     st.download_button(
                         label="💾 Download Excel with Categories",
