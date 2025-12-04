@@ -312,10 +312,28 @@ def render_category_mapper():
                         updated_df.to_excel(writer, index=False, sheet_name='Products')
                     output.seek(0)
                     
+                    excel_data = output.getvalue()
+                    filename = f"categorized_products_{time.strftime('%Y%m%d_%H%M%S')}.xlsx"
+                    
+                    # Auto-download trigger
+                    st.markdown(f"""
+                    <script>
+                        const blob = new Blob([new Uint8Array({list(excel_data)})], {{type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}});
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = '{filename}';
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+                    </script>
+                    """, unsafe_allow_html=True)
+                    
                     st.download_button(
                         label="💾 Download Excel with Categories",
-                        data=output.getvalue(),
-                        file_name=f"categorized_products_{time.strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        data=excel_data,
+                        file_name=filename,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         key="download_categorized_excel"
                     )
