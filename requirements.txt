@@ -7,9 +7,6 @@ requests
 openpyxl
 supabase
 curl-cffi
-setuptools
 python-dotenv
 openai
-
-
-
+setuptools
