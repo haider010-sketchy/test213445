@@ -104,6 +104,22 @@ def process_excel_with_categories(df, model="gpt-5-nano", max_rows=None):
     # Check if Title column exists
     if 'Title' not in df.columns:
         return None, "Excel file must contain a 'Title' column"
+
+    # --- NEW LOGIC ADDED HERE ---
+    
+    # Column D - Title: If blank, insert default string
+    if 'Title' in df.columns:
+        df['Title'] = df['Title'].apply(lambda x: "You are bidding on the item in the picture." if pd.isna(x) or str(x).strip() == '' else x)
+        
+    # Column E - Description: If blank, insert a period
+    if 'Description' in df.columns:
+        df['Description'] = df['Description'].apply(lambda x: "." if pd.isna(x) or str(x).strip() == '' else x)
+        
+    # Column R - Retail Price: If blank, insert 0
+    if 'Retail Price' in df.columns:
+        df['Retail Price'] = df['Retail Price'].apply(lambda x: 0 if pd.isna(x) or str(x).strip() == '' else x)
+        
+    # ----------------------------
     
     # Limit rows if specified
     if max_rows and max_rows > 0:
@@ -247,9 +263,9 @@ def render_category_mapper():
         ### Setup Instructions:
         1. Create a `.env` file in your project directory
         2. Add your OpenAI API key:
-           ```
-           OPENAI_API_KEY=your_api_key_here
-           ```
+            ```
+            OPENAI_API_KEY=your_api_key_here
+            ```
         3. Restart the app
         """)
         st.info("Get your OpenAI API key from: https://platform.openai.com/api-keys")
@@ -299,7 +315,7 @@ def render_category_mapper():
                 return
             
             # Show file info
-            st.info(f"📋 Ready to process {len(df)} products with GPT-5 nano")
+            st.info(f"📋 Ready to process {len(df)} products with {model}")
             
             # Show columns found
             st.write("**Columns in file:**", ", ".join(df.columns.tolist()[:10]))
