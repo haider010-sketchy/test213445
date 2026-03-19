@@ -97,7 +97,7 @@ Category Code:"""
     except Exception as e:
         return None, f"API Error: {str(e)}"
 
-def process_excel_with_categories(df, model="gpt-5-nano", max_rows=None):
+def process_excel_with_categories(df, model="gpt-5-nano", max_rows=None, bin_number="", truck_number=""):
     """
     Process Excel file and add category codes using GPT
     """
@@ -105,7 +105,7 @@ def process_excel_with_categories(df, model="gpt-5-nano", max_rows=None):
     if 'Title' not in df.columns:
         return None, "Excel file must contain a 'Title' column"
 
-    # --- NEW LOGIC ADDED HERE ---
+    # --- BLANK CELL FILL LOGIC ---
     
     # Column D - Title: If blank, insert default string
     if 'Title' in df.columns:
@@ -118,6 +118,16 @@ def process_excel_with_categories(df, model="gpt-5-nano", max_rows=None):
     # Column R - Retail Price: If blank, insert 0
     if 'Retail Price' in df.columns:
         df['Retail Price'] = df['Retail Price'].apply(lambda x: 0 if pd.isna(x) or str(x).strip() == '' else x)
+        
+    # --- NEW: BIN & TRUCK NUMBER LOGIC ---
+    
+    # Apply Bin Number to all rows if provided
+    if bin_number.strip():
+        df['Bin_Location'] = bin_number.strip()
+        
+    # Apply Truck Number to all rows if provided
+    if truck_number.strip():
+        df['Truck_Number'] = truck_number.strip()
         
     # ----------------------------
     
@@ -322,12 +332,28 @@ def render_category_mapper():
             if len(df.columns) > 10:
                 st.write(f"... and {len(df.columns) - 10} more columns")
             
+            st.markdown("---")
+            st.write("### 📦 Bulk Data Entry")
+            
+            # --- NEW: INPUT BOXES FOR BIN AND TRUCK ---
+            col1, col2 = st.columns(2)
+            with col1:
+                input_bin_location = st.text_input("Bin Number (AG)", placeholder="e.g. C7", help="This will be applied to all rows in the 'Bin_Location' column.")
+            with col2:
+                input_truck_number = st.text_input("Truck Number (AI)", placeholder="e.g. LOAD-000036", help="This will be applied to all rows in the 'Truck_Number' column.")
+            
             # Process button
             if st.button("🚀 Start Category Mapping", type="primary", key="start_mapping"):
                 st.markdown("---")
                 
                 with st.spinner("Analyzing titles with GPT..."):
-                    updated_df, error = process_excel_with_categories(df, model, max_rows)
+                    updated_df, error = process_excel_with_categories(
+                        df, 
+                        model, 
+                        max_rows, 
+                        bin_number=input_bin_location, 
+                        truck_number=input_truck_number
+                    )
                 
                 if error:
                     st.error(f"❌ Error: {error}")
