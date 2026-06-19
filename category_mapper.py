@@ -368,12 +368,22 @@ def render_category_mapper():
     else:
         model = "gpt-5"
 
+    MAX_FILES = 5
     uploaded_files = st.file_uploader(
-        "Upload Excel file(s) (.xlsx)",
+        f"Upload Excel file(s) (.xlsx) — up to {MAX_FILES} at a time",
         type=['xlsx'],
         accept_multiple_files=True,
         key="category_mapper_uploader"
     )
+
+    # Enforce the 5-file limit
+    if uploaded_files and len(uploaded_files) > MAX_FILES:
+        st.error(
+            f"❌ You uploaded {len(uploaded_files)} files. "
+            f"Please upload no more than {MAX_FILES} files at a time. "
+            "Remove the extra files using the ✕ next to each file above."
+        )
+        uploaded_files = None
 
     if uploaded_files:
         # Read each file once this run (used for the preview AND for processing)
