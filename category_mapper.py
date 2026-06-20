@@ -188,28 +188,29 @@ def process_files_concurrently(jobs, model="gpt-5-nano", max_workers=5):
     """
     file_state = {}
     ui = {}
-    tasks = []          # (file_id, row_index, title)
+    per_file_rows = {}   # fid -> [(row_index, title), ...] needing a GPT call
     overall_total = 0
 
     st.markdown("### ⏳ Processing all files at the same time")
     overall_bar = st.progress(0.0)
     overall_caption = st.empty()
 
-    # Build the task list and a live progress block for each file
+    # Set up a live progress block for each file and collect its rows
     for fid, job in enumerate(jobs):
         df = job['df']
         skipped_items = []
+        gpt_rows = []
 
         for idx, row in df.iterrows():
             title = row['Title']
             if pd.isna(title) or str(title).strip() == '' or str(title).strip() == GENERIC_TITLE:
                 skipped_items.append(f"Row {idx + 2}: Skipped category mapping (No unique title)")
             else:
-                tasks.append((fid, idx, str(title)))
+                gpt_rows.append((idx, str(title)))
 
+        per_file_rows[fid] = gpt_rows
         total = len(df)
-        gpt_rows = total - len(skipped_items)
-        overall_total += gpt_rows
+        overall_total += len(gpt_rows)
 
         file_state[fid] = {
             'processed': len(skipped_items),   # skipped rows count as already processed
@@ -230,13 +231,28 @@ def process_files_concurrently(jobs, model="gpt-5-nano", max_workers=5):
         _render_file_metrics(ui[fid], file_state[fid])
         ui[fid]['bar'].progress(file_state[fid]['processed'] / total if total else 1.0)
 
+    # Interleave rows round-robin across files so EVERY file is worked on at the
+    # same time. (Otherwise the pool finishes file 1 first, then file 2, which is
+    # exactly the "one by one" behavior we are fixing.)
+    tasks = []
+    longest = max((len(rows) for rows in per_file_rows.values()), default=0)
+    for r in range(longest):
+        for fid in per_file_rows:
+            if r < len(per_file_rows[fid]):
+                idx, title = per_file_rows[fid][r]
+                tasks.append((fid, idx, title))
+
+    # Give every file at least one worker so they all START together; the
+    # "Parallel speed" setting adds more workers on top to go faster.
+    effective_workers = max(int(max_workers), len(jobs))
+
     # Run every title concurrently across all files
     overall_done = 0
     if overall_total == 0:
         overall_bar.progress(1.0)
         overall_caption.info("No titles required AI categorization.")
     else:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=effective_workers) as executor:
             future_map = {
                 executor.submit(get_category_from_gpt, title, model): (fid, idx)
                 for (fid, idx, title) in tasks
