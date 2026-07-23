@@ -12,6 +12,7 @@ import random
 import queue
 import hashlib
 import os
+import concurrent.futures
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
@@ -790,131 +791,106 @@ def initialize_batch_processing(df, max_rows=None, batch_size=500):
     
     return True, f"Initialized: {total_asins} ASINs in {total_batches} batches"
 
+CONCURRENT_WORKERS = 20
+
+def _get_retail_price(state, asin):
+    if state['retail_col'] and state['df_data'] is not None:
+        asin_row = state['df_data'][state['df_data']['Asin'] == asin]
+        if not asin_row.empty and pd.notna(asin_row.iloc[0][state['retail_col']]):
+            try:
+                price_str = str(asin_row.iloc[0][state['retail_col']]).replace('$', '').replace(',', '').replace('#', '')
+                return float(price_str)
+            except:
+                return None
+    return None
+
+def _process_asins_concurrently(asins, state, label):
+    """Runs get_amazon_product_details for each ASIN, CONCURRENT_WORKERS at a time.
+    Appends failures to state['all_failed_asins']. Returns (success_count, failed_count)."""
+    total = len(asins)
+    progress_bar = st.progress(0)
+    status = st.empty()
+
+    success_count = 0
+    failed_count = 0
+    completed = 0
+    start_time = time.time()
+
+    status.text(f"🚀 {label} ({total} ASINs, {CONCURRENT_WORKERS} at a time)")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=CONCURRENT_WORKERS) as executor:
+        future_to_asin = {
+            executor.submit(get_amazon_product_details, asin, queue.Queue(), i + 1, total, _get_retail_price(state, asin)): asin
+            for i, asin in enumerate(asins)
+        }
+
+        for future in concurrent.futures.as_completed(future_to_asin):
+            asin = future_to_asin[future]
+            try:
+                result = future.result()
+            except Exception as e:
+                result = {'success': False, 'error': str(e)[:100]}
+
+            if result and result.get('success'):
+                success_count += 1
+            else:
+                failed_count += 1
+                state['all_failed_asins'].append(asin)
+
+            completed += 1
+            progress_bar.progress(completed / total)
+
+            elapsed = time.time() - start_time
+            rate = completed / elapsed if elapsed > 0 else 0
+            eta = (total - completed) / rate if rate > 0 else 0
+            status.text(
+                f"{label} | {completed}/{total} | "
+                f"✅{success_count} ❌{failed_count} | "
+                f"⚡{rate*60:.1f}/min | "
+                f"ETA:{eta/60:.1f}m"
+            )
+
+    status.empty()
+    progress_bar.empty()
+    gc.collect()
+
+    return success_count, failed_count
+
 def process_single_batch():
-    """Process one batch of 500 ASINs"""
+    """Process one batch of ASINs, CONCURRENT_WORKERS at a time"""
     state = st.session_state.batch_processing_state
-    
+
     if not state['is_active'] or state['current_batch'] >= state['total_batches']:
         return False, "No more batches to process"
-    
-    # Get current batch ASINs
+
     start_idx = state['current_batch'] * state['batch_size']
     end_idx = min(start_idx + state['batch_size'], len(state['asins_to_process']))
     batch_asins = state['asins_to_process'][start_idx:end_idx]
-    
     batch_num = state['current_batch'] + 1
-    
-    # Create progress indicators
-    progress_bar = st.progress(0)
-    status = st.empty()
-    
+
     batch_start_time = time.time()
-    batch_success = 0
-    batch_failed = 0
-    
-    status.text(f"🚀 Processing Batch {batch_num}/{state['total_batches']} ({len(batch_asins)} ASINs)")
-    
-    # Process each ASIN in the batch
-    for i, asin in enumerate(batch_asins):
-        global_idx = start_idx + i + 1
-        
-        # Get price for this ASIN
-        retail_price = None
-        if state['retail_col'] and state['df_data'] is not None:
-            asin_row = state['df_data'][state['df_data']['Asin'] == asin]
-            if not asin_row.empty and pd.notna(asin_row.iloc[0][state['retail_col']]):
-                try:
-                    price_str = str(asin_row.iloc[0][state['retail_col']]).replace('$', '').replace(',', '').replace('#', '')
-                    retail_price = float(price_str)
-                except:
-                    pass
-        
-        # Process ASIN
-        result = get_amazon_product_details(asin, queue.Queue(), global_idx, len(state['asins_to_process']), retail_price)
-        
-        if result and result.get('success'):
-            batch_success += 1
-            state['processed_count'] += 1
-        else:
-            batch_failed += 1
-            state['failed_count'] += 1
-            state['all_failed_asins'].append(asin)
-        
-        # Update progress
-        progress = (i + 1) / len(batch_asins)
-        progress_bar.progress(progress)
-        
-        # Calculate timing
-        elapsed = time.time() - batch_start_time
-        rate = (i + 1) / elapsed if elapsed > 0 else 0
-        eta = (len(batch_asins) - (i + 1)) / rate if rate > 0 else 0
-        
-        # Update status
-        status.text(
-            f"📦 Batch {batch_num}/{state['total_batches']} | "
-            f"{i + 1}/{len(batch_asins)} | "
-            f"✅{batch_success} ❌{batch_failed} | "
-            f"⚡{rate*60:.1f}/min | "
-            f"ETA:{eta/60:.1f}m"
-        )
-    
-    # Complete batch
-    progress_bar.progress(1.0)
-    batch_time = time.time() - batch_start_time
-    
-    # Update state
+    batch_success, batch_failed = _process_asins_concurrently(
+        batch_asins, state, label=f"📦 Batch {batch_num}/{state['total_batches']}"
+    )
+
+    state['processed_count'] += batch_success
+    state['failed_count'] += batch_failed
     state['current_batch'] += 1
-    
-    # Clear memory
-    gc.collect()
-    
-    status.empty()
-    progress_bar.empty()
-    
+
+    batch_time = time.time() - batch_start_time
     return True, f"Batch {batch_num} completed in {batch_time/60:.1f} minutes: ✅{batch_success} ❌{batch_failed}"
 
 def process_failed_retry():
-    """Re-run scraping for every ASIN currently marked as failed (each gets the normal 5 internal attempts again)"""
+    """Re-run scraping for every ASIN currently marked as failed, CONCURRENT_WORKERS at a time
+    (each ASIN still gets its own 5 internal attempts)"""
     state = st.session_state.batch_processing_state
     to_retry = list(state['all_failed_asins'])
     state['all_failed_asins'] = []
 
-    progress_bar = st.progress(0)
-    status = st.empty()
+    retry_success, retry_failed = _process_asins_concurrently(to_retry, state, label="🔁 Retrying failed ASINs")
 
-    retry_success = 0
-    retry_failed = 0
-    start_time = time.time()
-
-    for i, asin in enumerate(to_retry):
-        retail_price = None
-        if state['retail_col'] and state['df_data'] is not None:
-            asin_row = state['df_data'][state['df_data']['Asin'] == asin]
-            if not asin_row.empty and pd.notna(asin_row.iloc[0][state['retail_col']]):
-                try:
-                    price_str = str(asin_row.iloc[0][state['retail_col']]).replace('$', '').replace(',', '').replace('#', '')
-                    retail_price = float(price_str)
-                except:
-                    pass
-
-        result = get_amazon_product_details(asin, queue.Queue(), i + 1, len(to_retry), retail_price)
-
-        if result and result.get('success'):
-            retry_success += 1
-            state['processed_count'] += 1
-            state['failed_count'] -= 1
-        else:
-            retry_failed += 1
-            state['all_failed_asins'].append(asin)
-
-        progress_bar.progress((i + 1) / len(to_retry))
-        elapsed = time.time() - start_time
-        rate = (i + 1) / elapsed if elapsed > 0 else 0
-        status.text(f"🔁 Retrying failed ASINs | {i + 1}/{len(to_retry)} | ✅{retry_success} ❌{retry_failed} | ⚡{rate*60:.1f}/min")
-
-    progress_bar.empty()
-    status.empty()
-    gc.collect()
+    state['processed_count'] += retry_success
+    state['failed_count'] -= retry_success
 
     return retry_success, retry_failed
 
