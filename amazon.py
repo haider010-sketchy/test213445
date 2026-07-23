@@ -873,6 +873,51 @@ def process_single_batch():
     
     return True, f"Batch {batch_num} completed in {batch_time/60:.1f} minutes: ✅{batch_success} ❌{batch_failed}"
 
+def process_failed_retry():
+    """Re-run scraping for every ASIN currently marked as failed (each gets the normal 5 internal attempts again)"""
+    state = st.session_state.batch_processing_state
+    to_retry = list(state['all_failed_asins'])
+    state['all_failed_asins'] = []
+
+    progress_bar = st.progress(0)
+    status = st.empty()
+
+    retry_success = 0
+    retry_failed = 0
+    start_time = time.time()
+
+    for i, asin in enumerate(to_retry):
+        retail_price = None
+        if state['retail_col'] and state['df_data'] is not None:
+            asin_row = state['df_data'][state['df_data']['Asin'] == asin]
+            if not asin_row.empty and pd.notna(asin_row.iloc[0][state['retail_col']]):
+                try:
+                    price_str = str(asin_row.iloc[0][state['retail_col']]).replace('$', '').replace(',', '').replace('#', '')
+                    retail_price = float(price_str)
+                except:
+                    pass
+
+        result = get_amazon_product_details(asin, queue.Queue(), i + 1, len(to_retry), retail_price)
+
+        if result and result.get('success'):
+            retry_success += 1
+            state['processed_count'] += 1
+            state['failed_count'] -= 1
+        else:
+            retry_failed += 1
+            state['all_failed_asins'].append(asin)
+
+        progress_bar.progress((i + 1) / len(to_retry))
+        elapsed = time.time() - start_time
+        rate = (i + 1) / elapsed if elapsed > 0 else 0
+        status.text(f"🔁 Retrying failed ASINs | {i + 1}/{len(to_retry)} | ✅{retry_success} ❌{retry_failed} | ⚡{rate*60:.1f}/min")
+
+    progress_bar.empty()
+    status.empty()
+    gc.collect()
+
+    return retry_success, retry_failed
+
 def render_batch_status():
     """Render batch processing status and controls"""
     state = st.session_state.batch_processing_state
@@ -943,8 +988,14 @@ def render_batch_status():
                     key="download_error_csv"
                 )
     
-    # Show recent failed ASINs if any
+    # Show recent failed ASINs if any, with a manual retry option
     if state['all_failed_asins']:
+        if st.button(f"🔁 Retry Failed ASINs ({len(state['all_failed_asins'])})", key="retry_failed_asins", type="secondary", help="Try scraping the currently-failed ASINs again"):
+            with st.spinner(f"Retrying {len(state['all_failed_asins'])} failed ASINs..."):
+                retry_success, retry_failed = process_failed_retry()
+            st.success(f"Retry complete: ✅ {retry_success} fixed, ❌ {retry_failed} still failing")
+            st.rerun()
+
         recent_failed = state['all_failed_asins'][-20:]  # Show last 20 failed
         if len(recent_failed) > 0:
             with st.expander(f"❌ Recent Failed ASINs (Last {len(recent_failed)} of {len(state['all_failed_asins'])} total)", expanded=False):
