@@ -599,22 +599,12 @@ def add_batch_log(message, level="info"):
         st.session_state.batch_processing_state['all_logs'] = st.session_state.batch_processing_state['all_logs'][-200:]
 
 AMAZON_IMPERSONATE_PROFILES = ["chrome124", "chrome120", "chrome110", "safari15_5"]
+MAX_FETCH_ATTEMPTS = 5
 
-def get_amazon_product_details(asin, log_queue, processing_id, total_count, retail_price=None):
-    """Direct scrape via curl_cffi (browser impersonation) - no Zyte"""
-    st.session_state.current_processing_id = processing_id
-    st.session_state.total_processing_count = total_count
-
-    product_details = {
-        'asin': asin,
-        'image_url': '',
-        'success': False,
-        'retry_count': 0,
-        'error': None
-    }
-
+def _attempt_amazon_fetch(asin, impersonate):
+    """Single scrape attempt. Returns dict with success/image_url/error."""
     url = f"https://www.amazon.com/dp/{asin}"
-    impersonate = random.choice(AMAZON_IMPERSONATE_PROFILES)
+    result = {'success': False, 'image_url': '', 'error': None}
 
     try:
         api_response = cffi_requests.get(
@@ -639,55 +629,82 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count, reta
                         base_url = largest_image.split('._')[0]
                         largest_image = base_url + "._AC_SL1500_.jpg"
 
-                    product_details['image_url'] = largest_image
-                    product_details['success'] = True
-                    store_image_to_supabase(asin, largest_image, "amazon", retail_price)
-                    add_batch_log(f"ASIN {asin}: Successfully found image", "success")
-                    return product_details
+                    result['image_url'] = largest_image
+                    result['success'] = True
+                    return result
                 except Exception as e:
-                    product_details['error'] = f'Image parse error: {str(e)}'
-                    add_batch_log(f"ASIN {asin}: Image parse error: {str(e)}", "error")
+                    result['error'] = f'Image parse error: {str(e)}'
+                    return result
 
             if img_tag and img_tag.get("src"):
                 src_url = img_tag["src"]
                 if '._' in src_url:
                     base_url = src_url.split('._')[0]
                     src_url = base_url + "._AC_SL1500_.jpg"
-                product_details['image_url'] = src_url
-                product_details['success'] = True
-                store_image_to_supabase(asin, src_url, "amazon", retail_price)
-                add_batch_log(f"ASIN {asin}: Successfully found fallback image", "success")
-                return product_details
+                result['image_url'] = src_url
+                result['success'] = True
+                return result
 
             lower_text = resp_text.lower()
             if "captcha" in lower_text or "api-services-support@amazon.com" in lower_text:
-                product_details['error'] = 'Bot detection: CAPTCHA triggered'
-                add_batch_log(f"ASIN {asin}: Bot detection - CAPTCHA triggered", "error")
+                result['error'] = 'Bot detection: CAPTCHA triggered'
             else:
-                product_details['error'] = 'No image found'
-                add_batch_log(f"ASIN {asin}: No image found", "warning")
+                result['error'] = 'No image found'
 
         elif api_response.status_code == 429:
-            product_details['error'] = 'Rate limit exceeded'
-            add_batch_log(f"ASIN {asin}: Rate limit exceeded", "error")
+            result['error'] = 'Rate limit exceeded'
         elif api_response.status_code in (503, 509):
-            product_details['error'] = f'Service unavailable ({api_response.status_code})'
-            add_batch_log(f"ASIN {asin}: Service unavailable ({api_response.status_code})", "error")
+            result['error'] = f'Service unavailable ({api_response.status_code})'
         elif api_response.status_code == 404:
-            product_details['error'] = 'Product not found (404)'
-            add_batch_log(f"ASIN {asin}: Product not found (404)", "error")
+            result['error'] = 'Product not found (404)'
         else:
-            product_details['error'] = f'HTTP {api_response.status_code}'
-            add_batch_log(f"ASIN {asin}: HTTP {api_response.status_code}", "error")
+            result['error'] = f'HTTP {api_response.status_code}'
 
     except Exception as e:
-        product_details['error'] = str(e)[:100]
-        add_batch_log(f"ASIN {asin}: Exception: {str(e)[:100]}", "error")
+        result['error'] = str(e)[:100]
 
-    if not product_details['success']:
-        if not product_details['error']:
-            product_details['error'] = 'No image found'
-            add_batch_log(f"ASIN {asin}: No image found", "warning")
+    return result
+
+def get_amazon_product_details(asin, log_queue, processing_id, total_count, retail_price=None):
+    """Direct scrape via curl_cffi (browser impersonation) - no Zyte.
+    Retries up to MAX_FETCH_ATTEMPTS times (rotating browser profile) before giving up."""
+    st.session_state.current_processing_id = processing_id
+    st.session_state.total_processing_count = total_count
+
+    product_details = {
+        'asin': asin,
+        'image_url': '',
+        'success': False,
+        'retry_count': 0,
+        'error': None
+    }
+
+    profiles = random.sample(AMAZON_IMPERSONATE_PROFILES, len(AMAZON_IMPERSONATE_PROFILES))
+
+    for attempt in range(1, MAX_FETCH_ATTEMPTS + 1):
+        impersonate = profiles[(attempt - 1) % len(profiles)]
+        product_details['retry_count'] = attempt - 1
+
+        attempt_result = _attempt_amazon_fetch(asin, impersonate)
+
+        if attempt_result['success']:
+            product_details['image_url'] = attempt_result['image_url']
+            product_details['success'] = True
+            product_details['error'] = None
+            store_image_to_supabase(asin, attempt_result['image_url'], "amazon", retail_price)
+            if attempt == 1:
+                add_batch_log(f"ASIN {asin}: Successfully found image", "success")
+            else:
+                add_batch_log(f"ASIN {asin}: Successfully found image on attempt {attempt}/{MAX_FETCH_ATTEMPTS}", "success")
+            return product_details
+
+        product_details['error'] = attempt_result['error']
+
+        if attempt < MAX_FETCH_ATTEMPTS:
+            add_batch_log(f"ASIN {asin}: Attempt {attempt}/{MAX_FETCH_ATTEMPTS} failed ({attempt_result['error']}), retrying...", "warning")
+            time.sleep(random.uniform(1, 2.5))
+        else:
+            add_batch_log(f"ASIN {asin}: All {MAX_FETCH_ATTEMPTS} attempts failed ({attempt_result['error']})", "error")
 
     return product_details
 
