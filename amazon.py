@@ -3,7 +3,6 @@ import base64
 import streamlit as st
 import pandas as pd
 import requests
-from curl_cffi import requests as cffi_requests
 from bs4 import BeautifulSoup
 import time
 import re
@@ -18,17 +17,16 @@ from supabase import create_client, Client
 
 load_dotenv()
 
-AMAZON_SCRAPE_HEADERS = {
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-    "Referer": "https://www.google.com/",
-}
+def _load_zyte_api_key():
+    try:
+        key = st.secrets.get("ZYTE_API_KEY", "")
+        if key:
+            return key
+    except Exception:
+        pass
+    return os.getenv("ZYTE_API_KEY", "")
+
+ZYTE_API_KEY = _load_zyte_api_key()
 SUPABASE_URL = os.getenv('SUPABASE_URL', "https://sjxkhpuaucenweapjlre.supabase.co")
 SUPABASE_KEY = os.getenv('SUPABASE_KEY', "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNqeGtocHVhdWNlbndlYXBqbHJlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMyNjIyMTYsImV4cCI6MjA3ODgzODIxNn0.2R7gf9pi0rdCq9CpK-IEmFOAvU69BrOULKYmID47FwQ")
 
@@ -599,24 +597,30 @@ def add_batch_log(message, level="info"):
     if len(st.session_state.batch_processing_state['all_logs']) > 200:
         st.session_state.batch_processing_state['all_logs'] = st.session_state.batch_processing_state['all_logs'][-200:]
 
-AMAZON_IMPERSONATE_PROFILES = ["chrome124", "chrome120", "chrome110", "safari15_5"]
 MAX_FETCH_ATTEMPTS = 5
+RATE_LIMIT_COOLDOWN = 30
 
-def _attempt_amazon_fetch(asin, impersonate):
-    """Single scrape attempt. Returns dict with success/image_url/error."""
+def _attempt_amazon_fetch_zyte(asin):
+    """Single scrape attempt via Zyte API. Returns dict with success/image_url/error."""
     url = f"https://www.amazon.com/dp/{asin}"
     result = {'success': False, 'image_url': '', 'error': None}
 
     try:
-        api_response = cffi_requests.get(
-            url,
-            headers=AMAZON_SCRAPE_HEADERS,
-            impersonate=impersonate,
-            timeout=30
+        api_response = requests.post(
+            "https://api.zyte.com/v1/extract",
+            auth=(ZYTE_API_KEY, ""),
+            json={
+                "url": url,
+                "httpResponseBody": True,
+                "followRedirect": True,
+            },
+            timeout=60
         )
 
         if api_response.status_code == 200:
-            resp_text = api_response.text
+            response_data = api_response.json()
+            http_response_body = base64.b64decode(response_data["httpResponseBody"])
+            resp_text = http_response_body.decode('utf-8', errors='ignore')
             soup = BeautifulSoup(resp_text, 'html.parser')
             img_tag = soup.find("img", {"id": "landingImage"})
 
@@ -646,16 +650,22 @@ def _attempt_amazon_fetch(asin, impersonate):
                 result['success'] = True
                 return result
 
-            lower_text = resp_text.lower()
-            if "captcha" in lower_text or "api-services-support@amazon.com" in lower_text:
-                result['error'] = 'Bot detection: CAPTCHA triggered'
-            else:
-                result['error'] = 'No image found'
+            result['error'] = 'No image found'
 
+        elif api_response.status_code == 422:
+            error_detail = api_response.json().get('detail', 'Unknown error')
+            result['error'] = f'Validation error: {error_detail}'
         elif api_response.status_code == 429:
             result['error'] = 'Rate limit exceeded'
-        elif api_response.status_code in (503, 509):
-            result['error'] = f'Service unavailable ({api_response.status_code})'
+        elif api_response.status_code == 403:
+            error_detail = ''
+            try:
+                error_detail = api_response.json().get('detail', '')
+            except Exception:
+                pass
+            result['error'] = f'Zyte account error (403): {error_detail}'
+        elif api_response.status_code == 503:
+            result['error'] = 'Service unavailable (503)'
         elif api_response.status_code == 404:
             result['error'] = 'Product not found (404)'
         else:
@@ -667,8 +677,7 @@ def _attempt_amazon_fetch(asin, impersonate):
     return result
 
 def get_amazon_product_details(asin, log_queue, processing_id, total_count, retail_price=None):
-    """Direct scrape via curl_cffi (browser impersonation) - no Zyte.
-    Retries up to MAX_FETCH_ATTEMPTS times (rotating browser profile) before giving up."""
+    """Fetch via Zyte API. Retries up to MAX_FETCH_ATTEMPTS times before giving up."""
     st.session_state.current_processing_id = processing_id
     st.session_state.total_processing_count = total_count
 
@@ -680,13 +689,15 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count, reta
         'error': None
     }
 
-    profiles = random.sample(AMAZON_IMPERSONATE_PROFILES, len(AMAZON_IMPERSONATE_PROFILES))
+    if not ZYTE_API_KEY:
+        product_details['error'] = 'Zyte API key not configured'
+        add_batch_log(f"ASIN {asin}: Zyte API key not configured", "error")
+        return product_details
 
     for attempt in range(1, MAX_FETCH_ATTEMPTS + 1):
-        impersonate = profiles[(attempt - 1) % len(profiles)]
         product_details['retry_count'] = attempt - 1
 
-        attempt_result = _attempt_amazon_fetch(asin, impersonate)
+        attempt_result = _attempt_amazon_fetch_zyte(asin)
 
         if attempt_result['success']:
             product_details['image_url'] = attempt_result['image_url']
@@ -701,9 +712,18 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count, reta
 
         product_details['error'] = attempt_result['error']
 
+        # Don't waste attempts retrying a definitively-missing product or a bad key
+        if attempt_result['error'] in ('Product not found (404)',) or 'account error' in (attempt_result['error'] or ''):
+            add_batch_log(f"ASIN {asin}: {attempt_result['error']} (not retrying)", "error")
+            break
+
         if attempt < MAX_FETCH_ATTEMPTS:
-            add_batch_log(f"ASIN {asin}: Attempt {attempt}/{MAX_FETCH_ATTEMPTS} failed ({attempt_result['error']}), retrying...", "warning")
-            time.sleep(random.uniform(1, 2.5))
+            if attempt_result['error'] == 'Rate limit exceeded':
+                add_batch_log(f"ASIN {asin}: Rate limited, cooling down {RATE_LIMIT_COOLDOWN}s before retry...", "warning")
+                time.sleep(RATE_LIMIT_COOLDOWN)
+            else:
+                add_batch_log(f"ASIN {asin}: Attempt {attempt}/{MAX_FETCH_ATTEMPTS} failed ({attempt_result['error']}), retrying...", "warning")
+                time.sleep(random.uniform(1, 2.5))
         else:
             add_batch_log(f"ASIN {asin}: All {MAX_FETCH_ATTEMPTS} attempts failed ({attempt_result['error']})", "error")
 
@@ -2018,7 +2038,10 @@ def main():
     if not st.session_state.authenticated:
         verify_password()
         return
-    
+
+    if not ZYTE_API_KEY:
+        st.warning("⚠️ ZYTE_API_KEY not configured — Amazon ASIN scraping won't work until it's set in `.streamlit/secrets.toml`. Excel/Direct URL tabs are unaffected.")
+
     st.markdown("""
     <div class="top-logo-container">
         <img src="data:image/png;base64,{logo_base64}" class="top-center-logo" alt="Logo">
