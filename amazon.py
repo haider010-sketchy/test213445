@@ -3,6 +3,7 @@ import base64
 import streamlit as st
 import pandas as pd
 import requests
+from curl_cffi import requests as cffi_requests
 from bs4 import BeautifulSoup
 import time
 import re
@@ -16,7 +17,17 @@ from supabase import create_client, Client
 
 load_dotenv()
 
-ZYTE_API_KEY = st.secrets["ZYTE_API_KEY"]
+AMAZON_SCRAPE_HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Referer": "https://www.google.com/",
+}
 SUPABASE_URL = os.getenv('SUPABASE_URL', "https://sjxkhpuaucenweapjlre.supabase.co")
 SUPABASE_KEY = os.getenv('SUPABASE_KEY', "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNqeGtocHVhdWNlbndlYXBqbHJlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMyNjIyMTYsImV4cCI6MjA3ODgzODIxNn0.2R7gf9pi0rdCq9CpK-IEmFOAvU69BrOULKYmID47FwQ")
 
@@ -587,11 +598,13 @@ def add_batch_log(message, level="info"):
     if len(st.session_state.batch_processing_state['all_logs']) > 200:
         st.session_state.batch_processing_state['all_logs'] = st.session_state.batch_processing_state['all_logs'][-200:]
 
+AMAZON_IMPERSONATE_PROFILES = ["chrome124", "chrome120", "chrome110", "safari15_5"]
+
 def get_amazon_product_details(asin, log_queue, processing_id, total_count, retail_price=None):
-    """OPTIMIZED: Single attempt, no delays - Zyte handles everything"""
+    """Direct scrape via curl_cffi (browser impersonation) - no Zyte"""
     st.session_state.current_processing_id = processing_id
     st.session_state.total_processing_count = total_count
-    
+
     product_details = {
         'asin': asin,
         'image_url': '',
@@ -600,44 +613,32 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count, reta
         'error': None
     }
 
-    # SINGLE ATTEMPT - NO RETRIES, NO DELAYS
-    # Zyte API handles retries, rate limiting, and proxy rotation internally
     url = f"https://www.amazon.com/dp/{asin}"
-    
+    impersonate = random.choice(AMAZON_IMPERSONATE_PROFILES)
+
     try:
-        if not ZYTE_API_KEY:
-            product_details['error'] = 'Zyte API key not configured'
-            add_batch_log(f"ASIN {asin}: Zyte API key not configured", "error")
-            return product_details
-        
-        api_response = requests.post(
-            "https://api.zyte.com/v1/extract",
-            auth=(ZYTE_API_KEY, ""),
-            json={
-                "url": url,
-                "httpResponseBody": True,
-                "followRedirect": True,
-            },
-            timeout=60
+        api_response = cffi_requests.get(
+            url,
+            headers=AMAZON_SCRAPE_HEADERS,
+            impersonate=impersonate,
+            timeout=30
         )
-        
+
         if api_response.status_code == 200:
-            response_data = api_response.json()
-            http_response_body = base64.b64decode(response_data["httpResponseBody"])
-            resp_text = http_response_body.decode('utf-8', errors='ignore')
+            resp_text = api_response.text
             soup = BeautifulSoup(resp_text, 'html.parser')
             img_tag = soup.find("img", {"id": "landingImage"})
-            
+
             if img_tag and img_tag.get("data-a-dynamic-image"):
                 try:
                     images_dict = json.loads(img_tag["data-a-dynamic-image"])
-                    largest_image = max(images_dict.keys(), 
+                    largest_image = max(images_dict.keys(),
                                       key=lambda x: images_dict[x][0] * images_dict[x][1])
-                    
+
                     if '._' in largest_image:
                         base_url = largest_image.split('._')[0]
                         largest_image = base_url + "._AC_SL1500_.jpg"
-                    
+
                     product_details['image_url'] = largest_image
                     product_details['success'] = True
                     store_image_to_supabase(asin, largest_image, "amazon", retail_price)
@@ -657,33 +658,37 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count, reta
                 store_image_to_supabase(asin, src_url, "amazon", retail_price)
                 add_batch_log(f"ASIN {asin}: Successfully found fallback image", "success")
                 return product_details
-        
-        elif api_response.status_code == 422:
-            error_detail = api_response.json().get('detail', 'Unknown error')
-            product_details['error'] = f'Validation error: {error_detail}'
-            add_batch_log(f"ASIN {asin}: Validation error: {error_detail}", "error")
+
+            lower_text = resp_text.lower()
+            if "captcha" in lower_text or "api-services-support@amazon.com" in lower_text:
+                product_details['error'] = 'Bot detection: CAPTCHA triggered'
+                add_batch_log(f"ASIN {asin}: Bot detection - CAPTCHA triggered", "error")
+            else:
+                product_details['error'] = 'No image found'
+                add_batch_log(f"ASIN {asin}: No image found", "warning")
+
         elif api_response.status_code == 429:
             product_details['error'] = 'Rate limit exceeded'
             add_batch_log(f"ASIN {asin}: Rate limit exceeded", "error")
-        elif api_response.status_code == 503:
-            product_details['error'] = 'Service unavailable (503)'
-            add_batch_log(f"ASIN {asin}: Service unavailable (503)", "error")
+        elif api_response.status_code in (503, 509):
+            product_details['error'] = f'Service unavailable ({api_response.status_code})'
+            add_batch_log(f"ASIN {asin}: Service unavailable ({api_response.status_code})", "error")
         elif api_response.status_code == 404:
             product_details['error'] = 'Product not found (404)'
             add_batch_log(f"ASIN {asin}: Product not found (404)", "error")
         else:
             product_details['error'] = f'HTTP {api_response.status_code}'
             add_batch_log(f"ASIN {asin}: HTTP {api_response.status_code}", "error")
-    
+
     except Exception as e:
         product_details['error'] = str(e)[:100]
         add_batch_log(f"ASIN {asin}: Exception: {str(e)[:100]}", "error")
-    
+
     if not product_details['success']:
         if not product_details['error']:
             product_details['error'] = 'No image found'
             add_batch_log(f"ASIN {asin}: No image found", "warning")
-    
+
     return product_details
 
 def detect_csv_type(df):
@@ -1965,21 +1970,7 @@ def render_upload_tab():
 
 def main():
     add_custom_css()
-    
-    if not ZYTE_API_KEY:
-        st.error("⚠️ Zyte API key not found!")
-        st.markdown("""
-        ### Setup Instructions:
-        1. Create a `.env` file in your project directory
-        2. Add your Zyte API key to the `.env` file:
-           ```
-           ZYTE_API_KEY=your_actual_api_key_here
-           ```
-        3. Restart the app
-        """)
-        st.info("Get your Zyte API key from: https://www.zyte.com/")
-        return
-    
+
     if not st.session_state.authenticated:
         verify_password()
         return
