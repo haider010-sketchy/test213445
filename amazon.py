@@ -72,6 +72,7 @@ if 'batch_processing_state' not in st.session_state:
         'processed_count': 0,
         'failed_count': 0,
         'all_failed_asins': [],
+        'failed_asin_errors': {},
         'all_logs': [],
         'start_time': None,
         'df_data': None,
@@ -175,10 +176,13 @@ def combine_stored_and_new_images(new_df=None, source_type="amazon"):
     else:
         return stored_df
 
-def generate_comprehensive_error_report(all_failed_asins, all_logs, df_data, retail_col):
-    """Generate comprehensive error report for all batches"""
+def generate_comprehensive_error_report(all_failed_asins, all_logs, df_data, retail_col, failed_asin_errors=None):
+    """Generate comprehensive error report for all batches.
+    Categorizes using the actual error returned per ASIN (failed_asin_errors), not log-text
+    guessing - log-text matching is unreliable since worker threads can't log to session state."""
+    failed_asin_errors = failed_asin_errors or {}
     report_data = []
-    
+
     for asin in all_failed_asins:
         # Find ASIN in original data for price info
         asin_row = None
@@ -186,46 +190,52 @@ def generate_comprehensive_error_report(all_failed_asins, all_logs, df_data, ret
             matching_rows = df_data[df_data['Asin'] == asin]
             if not matching_rows.empty:
                 asin_row = matching_rows.iloc[0]
-        
-        # Get logs for this ASIN
-        asin_logs = [msg for level, msg in all_logs if str(asin) in str(msg)]
-        
-        # Categorize error
+
+        raw_error = failed_asin_errors.get(asin, '')
+        raw_error_lower = raw_error.lower()
+
+        # Categorize error based on the actual error string returned by the fetch
         error_category = "Unknown Error"
-        error_detail = ""
-        retry_recommended = "No"
-        
-        if any("404" in log or "not found" in log.lower() for log in asin_logs):
+        error_detail = raw_error or "No error detail captured"
+        retry_recommended = "Maybe"
+
+        if "not found (404)" in raw_error_lower or "not found" in raw_error_lower:
             error_category = "Product Not Found"
-            error_detail = "ASIN does not exist on Amazon"
             retry_recommended = "No"
-        elif any("robot" in log.lower() or "captcha" in log.lower() for log in asin_logs):
+        elif "captcha" in raw_error_lower or "bot detection" in raw_error_lower:
             error_category = "Bot Detection"
-            error_detail = "CAPTCHA or bot check triggered"
             retry_recommended = "Yes"
-        elif any("No image found" in log or "no image" in log.lower() for log in asin_logs):
+        elif "no image found" in raw_error_lower:
             error_category = "No Image Available"
-            error_detail = "Product page has no landingImage"
             retry_recommended = "Maybe"
-        elif any("rate limit" in log.lower() or "429" in log for log in asin_logs):
+        elif "rate limit" in raw_error_lower or "429" in raw_error_lower:
             error_category = "Rate Limit"
-            error_detail = "API rate limit exceeded"
             retry_recommended = "Yes"
-        elif any("timeout" in log.lower() or "503" in log for log in asin_logs):
+        elif "timeout" in raw_error_lower or "503" in raw_error_lower or "service unavailable" in raw_error_lower:
             error_category = "Timeout/Service Unavailable"
-            error_detail = "Connection timeout or service unavailable"
             retry_recommended = "Yes"
-        elif any("Validation error" in log for log in asin_logs):
+        elif "validation error" in raw_error_lower:
             error_category = "Validation Error"
-            error_detail = "Zyte API validation failed"
             retry_recommended = "Maybe"
-        
+        elif "account error" in raw_error_lower or "zyte api key not configured" in raw_error_lower:
+            error_category = "Zyte Account/Key Issue"
+            retry_recommended = "No (fix key/account first)"
+        elif "image parse error" in raw_error_lower:
+            error_category = "Image Parse Error"
+            retry_recommended = "Yes"
+        elif raw_error:
+            error_category = "Other Error"
+            retry_recommended = "Maybe"
+
         # Get retail price
         retail_price = ""
         if asin_row is not None and retail_col and retail_col in asin_row:
             if pd.notna(asin_row[retail_col]):
                 retail_price = str(asin_row[retail_col])
-        
+
+        # Get logs for this ASIN, for extra context
+        asin_logs = [msg for level, msg in all_logs if str(asin) in str(msg)]
+
         report_data.append({
             'ASIN': asin,
             'Retail_Price': retail_price,
@@ -592,10 +602,19 @@ def add_batch_log(message, level="info"):
     timestamp = time.strftime("%H:%M:%S", time.localtime())
     log_entry = (level, f"[{timestamp}] {message}")
     st.session_state.batch_processing_state['all_logs'].append(log_entry)
-    
+
     # Keep only last 200 logs to save memory
     if len(st.session_state.batch_processing_state['all_logs']) > 200:
         st.session_state.batch_processing_state['all_logs'] = st.session_state.batch_processing_state['all_logs'][-200:]
+
+def _mask_api_key(key):
+    """Never log the full key - it ends up in a downloadable text file. Show enough to
+    confirm it's the right one (or that it's missing/empty) without exposing the secret."""
+    if not key:
+        return "NOT SET / EMPTY"
+    if len(key) <= 8:
+        return f"{'*' * len(key)} ({len(key)} chars)"
+    return f"{key[:4]}...{key[-4:]} ({len(key)} chars)"
 
 MAX_FETCH_ATTEMPTS = 5
 RATE_LIMIT_COOLDOWN = 30
@@ -677,21 +696,22 @@ def _attempt_amazon_fetch_zyte(asin):
     return result
 
 def get_amazon_product_details(asin, log_queue, processing_id, total_count, retail_price=None):
-    """Fetch via Zyte API. Retries up to MAX_FETCH_ATTEMPTS times before giving up."""
-    st.session_state.current_processing_id = processing_id
-    st.session_state.total_processing_count = total_count
-
+    """Fetch via Zyte API. Retries up to MAX_FETCH_ATTEMPTS times before giving up.
+    Thread-safe: does NOT touch st.session_state (worker threads don't share Streamlit's
+    session context, so any logging must happen in the main thread from the returned
+    'attempts' list instead)."""
     product_details = {
         'asin': asin,
         'image_url': '',
         'success': False,
         'retry_count': 0,
-        'error': None
+        'error': None,
+        'attempts': []  # list of (attempt_num, error_or_None) for main-thread logging
     }
 
     if not ZYTE_API_KEY:
         product_details['error'] = 'Zyte API key not configured'
-        add_batch_log(f"ASIN {asin}: Zyte API key not configured", "error")
+        product_details['attempts'].append((1, 'Zyte API key not configured'))
         return product_details
 
     for attempt in range(1, MAX_FETCH_ATTEMPTS + 1):
@@ -703,29 +723,22 @@ def get_amazon_product_details(asin, log_queue, processing_id, total_count, reta
             product_details['image_url'] = attempt_result['image_url']
             product_details['success'] = True
             product_details['error'] = None
+            product_details['attempts'].append((attempt, None))
             store_image_to_supabase(asin, attempt_result['image_url'], "amazon", retail_price)
-            if attempt == 1:
-                add_batch_log(f"ASIN {asin}: Successfully found image", "success")
-            else:
-                add_batch_log(f"ASIN {asin}: Successfully found image on attempt {attempt}/{MAX_FETCH_ATTEMPTS}", "success")
             return product_details
 
         product_details['error'] = attempt_result['error']
+        product_details['attempts'].append((attempt, attempt_result['error']))
 
         # Don't waste attempts retrying a definitively-missing product or a bad key
         if attempt_result['error'] in ('Product not found (404)',) or 'account error' in (attempt_result['error'] or ''):
-            add_batch_log(f"ASIN {asin}: {attempt_result['error']} (not retrying)", "error")
             break
 
         if attempt < MAX_FETCH_ATTEMPTS:
             if attempt_result['error'] == 'Rate limit exceeded':
-                add_batch_log(f"ASIN {asin}: Rate limited, cooling down {RATE_LIMIT_COOLDOWN}s before retry...", "warning")
                 time.sleep(RATE_LIMIT_COOLDOWN)
             else:
-                add_batch_log(f"ASIN {asin}: Attempt {attempt}/{MAX_FETCH_ATTEMPTS} failed ({attempt_result['error']}), retrying...", "warning")
                 time.sleep(random.uniform(1, 2.5))
-        else:
-            add_batch_log(f"ASIN {asin}: All {MAX_FETCH_ATTEMPTS} attempts failed ({attempt_result['error']})", "error")
 
     return product_details
 
@@ -768,6 +781,7 @@ def reset_batch_processing():
         'processed_count': 0,
         'failed_count': 0,
         'all_failed_asins': [],
+        'failed_asin_errors': {},
         'all_logs': [],
         'start_time': None,
         'df_data': None,
@@ -803,6 +817,7 @@ def initialize_batch_processing(df, max_rows=None, batch_size=500):
         'processed_count': 0,
         'failed_count': 0,
         'all_failed_asins': [],
+        'failed_asin_errors': {},
         'all_logs': [],
         'start_time': time.time(),
         'df_data': df,
@@ -826,7 +841,9 @@ def _get_retail_price(state, asin):
 
 def _process_asins_concurrently(asins, state, label):
     """Runs get_amazon_product_details for each ASIN, CONCURRENT_WORKERS at a time.
-    Appends failures to state['all_failed_asins']. Returns (success_count, failed_count)."""
+    Appends failures to state['all_failed_asins'] and records the real error in
+    state['failed_asin_errors']. All logging happens here in the MAIN thread, since
+    worker threads don't share Streamlit's session context. Returns (success_count, failed_count)."""
     total = len(asins)
     progress_bar = st.progress(0)
     status = st.empty()
@@ -837,6 +854,7 @@ def _process_asins_concurrently(asins, state, label):
     start_time = time.time()
 
     status.text(f"🚀 {label} ({total} ASINs, {CONCURRENT_WORKERS} at a time)")
+    add_batch_log(f"Using ZYTE_API_KEY: {_mask_api_key(ZYTE_API_KEY)}", "info")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=CONCURRENT_WORKERS) as executor:
         future_to_asin = {
@@ -849,13 +867,25 @@ def _process_asins_concurrently(asins, state, label):
             try:
                 result = future.result()
             except Exception as e:
-                result = {'success': False, 'error': str(e)[:100]}
+                result = {'success': False, 'error': str(e)[:100], 'attempts': [(1, str(e)[:100])]}
+
+            for attempt_num, attempt_error in result.get('attempts', []):
+                if attempt_error is None:
+                    if attempt_num == 1:
+                        add_batch_log(f"ASIN {asin}: Successfully found image", "success")
+                    else:
+                        add_batch_log(f"ASIN {asin}: Successfully found image on attempt {attempt_num}/{MAX_FETCH_ATTEMPTS}", "success")
+                else:
+                    add_batch_log(f"ASIN {asin}: Attempt {attempt_num}/{MAX_FETCH_ATTEMPTS} failed - {attempt_error}", "warning" if not result.get('success') and attempt_num < MAX_FETCH_ATTEMPTS else "error")
 
             if result and result.get('success'):
                 success_count += 1
+                state['failed_asin_errors'].pop(asin, None)
             else:
                 failed_count += 1
                 state['all_failed_asins'].append(asin)
+                state['failed_asin_errors'][asin] = result.get('error') or 'Unknown error'
+                add_batch_log(f"ASIN {asin}: FINAL - {result.get('error') or 'Unknown error'}", "error")
 
             completed += 1
             progress_bar.progress(completed / total)
@@ -965,25 +995,34 @@ def render_batch_status():
             st.rerun()
     
     with col4:
-        # Show download report button if there are failed ASINs
-        if state['all_failed_asins']:
-            if st.button(f"📥 Download Error Report ({len(state['all_failed_asins'])} failures)", key="download_error_report"):
-                error_report = generate_comprehensive_error_report(
-                    state['all_failed_asins'], 
-                    state['all_logs'], 
-                    state['df_data'], 
-                    state['retail_col']
-                )
-                
-                csv_data = error_report.to_csv(index=False)
-                st.download_button(
-                    label="💾 Save Error Report CSV",
-                    data=csv_data,
-                    file_name=f"failed_asins_report_{time.strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv",
-                    key="download_error_csv"
-                )
-    
+        if state['all_logs']:
+            log_text = "\n".join(f"[{msg}]" if level == "info" else f"[{level.upper()}] {msg}" for level, msg in state['all_logs'])
+            st.download_button(
+                label=f"📄 Download Full Log ({len(state['all_logs'])} lines)",
+                data=log_text,
+                file_name=f"batch_log_{time.strftime('%Y%m%d_%H%M%S')}.txt",
+                mime="text/plain",
+                key="download_full_log"
+            )
+
+    # Direct, single-click error report - no more two-step "click to reveal" dance
+    if state['all_failed_asins']:
+        error_report = generate_comprehensive_error_report(
+            state['all_failed_asins'],
+            state['all_logs'],
+            state['df_data'],
+            state['retail_col'],
+            state.get('failed_asin_errors', {})
+        )
+        csv_data = error_report.to_csv(index=False)
+        st.download_button(
+            label=f"📥 Download Error Report CSV ({len(state['all_failed_asins'])} failures)",
+            data=csv_data,
+            file_name=f"failed_asins_report_{time.strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+            key="download_error_csv"
+        )
+
     # Show recent failed ASINs if any, with a manual retry option
     if state['all_failed_asins']:
         if st.button(f"🔁 Retry Failed ASINs ({len(state['all_failed_asins'])})", key="retry_failed_asins", type="secondary", help="Try scraping the currently-failed ASINs again"):
@@ -994,11 +1033,10 @@ def render_batch_status():
 
         recent_failed = state['all_failed_asins'][-20:]  # Show last 20 failed
         if len(recent_failed) > 0:
-            with st.expander(f"❌ Recent Failed ASINs (Last {len(recent_failed)} of {len(state['all_failed_asins'])} total)", expanded=False):
-                cols = st.columns(5)
-                for i, asin in enumerate(recent_failed):
-                    with cols[i % 5]:
-                        st.code(asin)
+            with st.expander(f"❌ Recent Failed ASINs (Last {len(recent_failed)} of {len(state['all_failed_asins'])} total)", expanded=True):
+                for asin in recent_failed:
+                    error_msg = state.get('failed_asin_errors', {}).get(asin, 'No error captured')
+                    st.code(f"{asin}: {error_msg}")
 
 def process_amazon_data_batched(df, max_rows=None, batch_size=500):
     """Initialize Amazon batch processing"""
